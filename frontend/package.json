@@ -7,7 +7,8 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:tv": "vite build --mode tv --outDir dist-tv"
   },
   "dependencies": {
     "lucide-react": "^1.21.0",

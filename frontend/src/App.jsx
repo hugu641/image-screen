@@ -1,6 +1,8 @@
 import React from 'react';
 import { BrowserRouter, HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { needsServerSetup } from './services/serverConfig';
+
+const APP_MODE = import.meta.env.VITE_APP_MODE || 'web';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 
 // Pages
@@ -77,8 +79,8 @@ export default function App() {
           {/* Fullscreen TV Player */}
           <Route path="/tv" element={<TVPlayer />} />
 
-          {/* Public Home Page */}
-          <Route path="/" element={<Home />} />
+          {/* Public Home Page (the TV app has no home: it opens straight on the player) */}
+          <Route path="/" element={APP_MODE === 'tv' ? <Navigate to="/tv" replace /> : <Home />} />
 
           {/* Protected Administration Panel */}
           <Route

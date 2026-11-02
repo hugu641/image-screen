@@ -75,7 +75,7 @@ export default function ServerSetup() {
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 focus:border-brand-500 focus:outline-none font-mono text-sm"
+            className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 focus:outline-none font-mono text-sm"
           />
         </div>
 
@@ -95,7 +95,7 @@ export default function ServerSetup() {
         <button
           type="submit"
           disabled={status.loading || !value.trim()}
-          className="w-full py-3 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:opacity-50 font-semibold flex items-center justify-center gap-2"
+          className="w-full py-3 rounded-xl bg-brand-500 hover:bg-brand-600 focus:outline-none focus:ring-4 focus:ring-white/70 disabled:opacity-50 font-semibold flex items-center justify-center gap-2"
         >
           {status.loading && <Loader2 className="w-4 h-4 animate-spin" />}
           {status.loading ? 'Test en cours…' : 'Se connecter'}
