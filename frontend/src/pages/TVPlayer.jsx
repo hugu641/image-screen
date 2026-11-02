@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initSocket, getSocket, disconnectSocket } from '../services/socket';
-import { api, UPLOADS_URL } from '../services/api';
+import { api, mediaUrl } from '../services/api';
+import { getServerUrl } from '../services/serverConfig';
 import { WifiOff, Loader2, Tv } from 'lucide-react';
 import OnboardingTutorial from '../components/OnboardingTutorial';
 
@@ -209,7 +210,7 @@ export default function TVPlayer() {
       const loadedSlides = [];
 
       for (const item of slidesSchema) {
-        const fullUrl = `${UPLOADS_URL}${item.filepath}`;
+        const fullUrl = mediaUrl(item.filepath);
         const match = await cache.match(fullUrl);
         
         if (match) {
@@ -259,7 +260,7 @@ export default function TVPlayer() {
 
       // Download and cache each media file
       for (const item of mediaList) {
-        const fullUrl = `${UPLOADS_URL}${item.filepath}`;
+        const fullUrl = mediaUrl(item.filepath);
         
         // Try to fetch and cache if not already in cache
         try {
@@ -298,7 +299,7 @@ export default function TVPlayer() {
       // Fallback: render using normal network paths
       const fallbackSlides = mediaList.map(item => ({
         ...item,
-        localUrl: `${UPLOADS_URL}${item.filepath}`
+        localUrl: mediaUrl(item.filepath)
       }));
       setSlides(fallbackSlides);
       setCurrentSlideIndex(0);
@@ -427,9 +428,9 @@ export default function TVPlayer() {
             {/* Persistent QR code and admin link */}
             <div className="flex flex-col items-center mt-4">
               <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent('code=' + pairingCode)}`} alt="QR code admin" className="w-48 h-48 mb-2" />
-              <a href="http://localhost:5000/admin" target="_blank" className="text-brand-500 underline">
-                http://localhost:5000/admin
-              </a>
+              <span className="text-brand-500 font-mono">
+                {getServerUrl()}
+              </span>
             </div>
           </div>
           {/* Network indicator */}
@@ -461,7 +462,7 @@ export default function TVPlayer() {
       {/* Admin access overlay */}
       <div className="absolute top-4 right-4 bg-black/60 backdrop-blur-sm rounded-xl p-2 flex flex-col items-center">
         <img src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent('code=' + pairingCode)}`} alt="QR admin" className="w-24 h-24 mb-1" />
-        <a href="http://localhost:5000/admin" target="_blank" className="text-brand-500 underline text-xs">admin</a>
+        <span className="text-brand-500 text-xs font-mono">{getServerUrl().replace(/^https?:\/\//, '')}</span>
       </div>
       {/* Slide Container */}
       <div key={currentSlideIndex} className={`w-full h-full ${getTransitionClass()}`}>

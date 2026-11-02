@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../layouts/Layout';
-import { api, UPLOADS_URL } from '../services/api';
+import { api, mediaUrl } from '../services/api';
 import {
   PlaySquare,
   Plus,
@@ -375,7 +375,7 @@ export default function Playlists() {
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               <img
-                                src={`${UPLOADS_URL}${m.filepath}`}
+                                src={mediaUrl(m.filepath)}
                                 alt=""
                                 className="w-8 h-8 object-cover rounded shrink-0 bg-black"
                               />
@@ -436,7 +436,7 @@ export default function Playlists() {
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             <img
-                              src={`${UPLOADS_URL}${m.filepath}`}
+                              src={mediaUrl(m.filepath)}
                               alt=""
                               className="w-8 h-8 object-cover rounded shrink-0 bg-black"
                             />

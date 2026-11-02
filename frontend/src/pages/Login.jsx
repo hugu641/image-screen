@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { api } from '../services/api';
+import { api, mediaUrl } from '../services/api';
 import { Lock, Mail, Eye, EyeOff, User, ArrowLeft, CheckCircle } from 'lucide-react';
 
 export default function Login() {
@@ -109,7 +109,7 @@ export default function Login() {
         <div className="flex flex-col items-center mb-8 text-center">
           {logoUrl ? (
             <img
-              src={logoUrl.startsWith('http') || logoUrl.startsWith('/') ? logoUrl : `http://localhost:5000${logoUrl}`}
+              src={logoUrl.startsWith('http') || logoUrl.startsWith('/') ? logoUrl : mediaUrl(logoUrl)}
               alt="Logo"
               className="w-16 h-16 object-contain rounded-lg mb-4 bg-dark-900/60 p-2 border border-slate-800"
             />

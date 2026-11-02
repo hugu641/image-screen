@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { api } from '../services/api';
+import { api, mediaUrl } from '../services/api';
 import {
   LayoutDashboard,
   Tv,
@@ -75,7 +75,7 @@ export default function Layout({ children }) {
           <div className="flex items-center gap-3 px-2 py-4 mb-6">
             {storeSettings.logo ? (
               <img
-                src={storeSettings.logo.startsWith('http') || storeSettings.logo.startsWith('/') ? storeSettings.logo : `http://localhost:5000${storeSettings.logo}`}
+                src={storeSettings.logo.startsWith('http') || storeSettings.logo.startsWith('/') ? storeSettings.logo : mediaUrl(storeSettings.logo)}
                 alt="Logo"
                 className="w-10 h-10 object-contain rounded-md"
                 onError={(e) => {
@@ -168,7 +168,7 @@ export default function Layout({ children }) {
             <div className="flex items-center gap-3 px-2 py-4 mb-6">
               {storeSettings.logo ? (
                 <img
-                  src={storeSettings.logo.startsWith('http') || storeSettings.logo.startsWith('/') ? storeSettings.logo : `http://localhost:5000${storeSettings.logo}`}
+                  src={storeSettings.logo.startsWith('http') || storeSettings.logo.startsWith('/') ? storeSettings.logo : mediaUrl(storeSettings.logo)}
                   alt="Logo"
                   className="w-10 h-10 object-contain rounded-md"
                 />

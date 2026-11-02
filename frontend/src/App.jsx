@@ -1,5 +1,6 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { needsServerSetup } from './services/serverConfig';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 
 // Pages
@@ -13,6 +14,19 @@ import TVPlayer from './pages/TVPlayer';
 import LivePreview from './pages/LivePreview';
 import Home from './pages/Home';
 import AdminPanel from './pages/AdminPanel';
+import ServerSetup from './pages/ServerSetup';
+
+// file:// (Electron) has no server-side routing, so use hash URLs there.
+const Router = window.location.protocol === 'file:' ? HashRouter : BrowserRouter;
+
+// Native apps with no server chosen yet are sent to /setup before anything else.
+function SetupGate({ children }) {
+  const location = useLocation();
+  if (needsServerSetup() && location.pathname !== '/setup') {
+    return <Navigate to="/setup" replace />;
+  }
+  return children;
+}
 
 // Protected Route Guard
 function ProtectedRoute({ children }) {
@@ -52,7 +66,11 @@ export default function App() {
   return (
     <AuthProvider>
       <Router>
+        <SetupGate>
         <Routes>
+          {/* Server address (native apps, first launch) */}
+          <Route path="/setup" element={<ServerSetup />} />
+
           {/* Public Authentication */}
           <Route path="/login" element={<Login />} />
 
@@ -127,6 +145,7 @@ export default function App() {
           {/* Fallback Route */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </SetupGate>
       </Router>
     </AuthProvider>
   );

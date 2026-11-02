@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { api, UPLOADS_URL } from '../services/api';
+import { api, mediaUrl } from '../services/api';
 import { getSocket, initSocket } from '../services/socket';
 import { Tv, ArrowLeft, Wifi, WifiOff, Loader } from 'lucide-react';
 
@@ -139,7 +139,7 @@ export default function LivePreview() {
             currentSlide.mime_type.startsWith('video/') ? (
               <video
                 key={currentSlide.id}
-                src={`${UPLOADS_URL}${currentSlide.filepath}`}
+                src={mediaUrl(currentSlide.filepath)}
                 autoPlay
                 muted
                 loop
@@ -148,7 +148,7 @@ export default function LivePreview() {
             ) : (
               <img
                 key={currentSlide.id}
-                src={`${UPLOADS_URL}${currentSlide.filepath}`}
+                src={mediaUrl(currentSlide.filepath)}
                 alt=""
                 className="w-full h-full object-cover animate-fade-in"
               />

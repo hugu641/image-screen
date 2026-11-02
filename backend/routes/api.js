@@ -16,6 +16,9 @@ function requireAdmin(req, res, next) {
   res.status(403).json({ error: 'Accès réservé aux administrateurs.' });
 }
 
+// Health check (used by the native apps to validate a server URL)
+router.get('/health', (req, res) => res.json({ ok: true, app: 'imagescreen' }));
+
 // Authentication Routes
 router.post('/auth/register', authController.register);
 router.post('/auth/login', authController.login);

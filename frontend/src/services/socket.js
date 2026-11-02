@@ -1,27 +1,12 @@
 /**
  * socket.js — Socket.IO client
  *
- * Uses the same server URL resolution as api.js:
- *  1. localStorage["server_url"] if set (cloud / remote server)
- *  2. import.meta.env.VITE_SERVER_URL ← set at build time via Vercel env variables
- *  3. window.location.origin otherwise (same-origin, works locally and in production)
+ * Uses the same server URL resolution as api.js (see serverConfig.js).
  */
 import { io } from 'socket.io-client';
+import { getServerUrl } from './serverConfig';
 
-function getSocketUrl() {
-  // 1. Manual override
-  const saved = localStorage.getItem('server_url');
-  if (saved && saved.trim() !== '') {
-    return saved.trim().replace(/\/$/, '');
-  }
-  // 2. Build-time env variable
-  const envUrl = import.meta.env.VITE_SERVER_URL;
-  if (envUrl && envUrl.trim() !== '') {
-    return envUrl.trim().replace(/\/$/, '');
-  }
-  // 3. Same-origin fallback
-  return window.location.origin;
-}
+const getSocketUrl = getServerUrl;
 
 let socket = null;
 

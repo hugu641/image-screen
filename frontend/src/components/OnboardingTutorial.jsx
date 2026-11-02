@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { getServerUrl } from '../services/serverConfig';
 
 /**
  * OnboardingTutorial
@@ -43,7 +44,7 @@ export default function OnboardingTutorial({ storeName, logoUrl, pairingCode, on
         </div>
         <p className="text-center text-slate-300 mb-2">Vous pouvez également vous connecter via le lien suivant :</p>
         <div className="flex justify-center mb-4">
-          <a href="http://localhost:5000/admin" target="_blank" className="text-brand-500 underline">http://localhost:5000/admin</a>
+          <a href={`${getServerUrl()}/`} target="_blank" rel="noreferrer" className="text-brand-500 underline">{getServerUrl()}</a>
         </div>
         <div className="text-center">
           <button
