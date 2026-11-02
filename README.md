@@ -61,7 +61,8 @@ chmod +x start-production.sh
     ```bash
     npm run build
     ```
-3.  **Lancer le serveur** :
+3.  **(Optionnel) Configurer** : copiez `backend/.env.example` en `backend/.env`. Aucun secret à écrire : un secret de session aléatoire est généré automatiquement.
+4.  **Lancer le serveur** :
     ```bash
     npm run backend
     ```
@@ -72,13 +73,17 @@ Le serveur écoute sur le port **5000**.
 
 ---
 
-## 🔑 Identifiants d'Administration par Défaut
+## 🔑 Premier compte (administrateur)
 
-Lors du premier démarrage, la base de données est automatiquement créée et un compte administrateur est configuré :
-*   **Email** : `admin@magasin.local`
-*   **Mot de passe** : `admin123`
+Il n'y a **aucun compte ni mot de passe par défaut**. Au premier démarrage, ouvrez l'administration :
+la page de connexion propose **« Créer le compte administrateur »**. Le premier compte créé devient
+administrateur ; ensuite **les inscriptions sont fermées** (variable `ALLOW_REGISTRATION=true` pour les rouvrir).
 
-> 💡 *Vous pouvez modifier ce mot de passe à tout moment dans l'onglet **Paramètres** de l'administration.*
+> 🔒 Mot de passe : 8 caractères minimum. Si vous mettez à jour une ancienne installation qui utilisait
+> `admin@magasin.local / admin123` ou `hugu@imagescreen.local / 1234`, ces comptes sont conservés mais
+> **un changement de mot de passe est exigé** à la prochaine connexion.
+
+Voir aussi [`SECURITY.md`](SECURITY.md).
 
 ---
 

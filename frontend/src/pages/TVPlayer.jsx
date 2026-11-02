@@ -1,23 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { initSocket, getSocket, disconnectSocket } from '../services/socket';
+import { initSocket, getSocket, disconnectSocket, randomHex } from '../services/socket';
 import { api, mediaUrl } from '../services/api';
 import { getServerUrl } from '../services/serverConfig';
 import { WifiOff, Loader2, Tv } from 'lucide-react';
 import OnboardingTutorial from '../components/OnboardingTutorial';
+import QrCode from '../components/QrCode';
 
 // Help generate friendly 6-char code
 function generatePairingCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // omit ambiguous chars like O, 0, I, 1
   let result = '';
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
   for (let i = 0; i < 6; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+    result += chars.charAt(bytes[i] % chars.length); // 32 chars: no modulo bias
   }
   return result;
 }
 
 // Pseudo-UUID helper
 function generateUUID() {
-  return 'scr-' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  return 'scr-' + randomHex(12);
 }
 
 export default function TVPlayer() {
@@ -427,7 +430,7 @@ export default function TVPlayer() {
             </p>
             {/* Persistent QR code and admin link */}
             <div className="flex flex-col items-center mt-4">
-              <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent('code=' + pairingCode)}`} alt="QR code admin" className="w-48 h-48 mb-2" />
+              <QrCode value={`code=${pairingCode}`} alt="QR code de couplage" className="w-48 h-48 mb-2" />
               <span className="text-brand-500 font-mono">
                 {getServerUrl()}
               </span>
@@ -461,7 +464,7 @@ export default function TVPlayer() {
     <div className="fixed inset-0 bg-gray-800 overflow-hidden z-50 select-none cursor-none w-screen h-screen">
       {/* Admin access overlay */}
       <div className="absolute top-4 right-4 bg-black/60 backdrop-blur-sm rounded-xl p-2 flex flex-col items-center">
-        <img src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent('code=' + pairingCode)}`} alt="QR admin" className="w-24 h-24 mb-1" />
+        <QrCode value={`code=${pairingCode}`} size={160} alt="QR de couplage" className="w-24 h-24 mb-1" />
         <span className="text-brand-500 text-xs font-mono">{getServerUrl().replace(/^https?:\/\//, '')}</span>
       </div>
       {/* Slide Container */}

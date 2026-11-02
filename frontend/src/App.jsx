@@ -32,7 +32,8 @@ function SetupGate({ children }) {
 
 // Protected Route Guard
 function ProtectedRoute({ children }) {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, mustChangePassword } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -43,12 +44,18 @@ function ProtectedRoute({ children }) {
     );
   }
 
-  return isAuthenticated ? children : <Navigate to="/login" replace />;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  // A pending password change (e.g. an account that still had a public default password)
+  // blocks everything except the Settings page where it can be done.
+  if (mustChangePassword && location.pathname !== '/settings') {
+    return <Navigate to="/settings" replace />;
+  }
+  return children;
 }
 
 // Admin Route Guard
 function AdminRoute({ children }) {
-  const { isAuthenticated, isAdmin, loading } = useAuth();
+  const { isAuthenticated, isAdmin, loading, mustChangePassword } = useAuth();
 
   if (loading) {
     return (
@@ -60,6 +67,7 @@ function AdminRoute({ children }) {
   }
 
   if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (mustChangePassword) return <Navigate to="/settings" replace />;
   if (!isAdmin) return <Navigate to="/dashboard" replace />;
   return children;
 }

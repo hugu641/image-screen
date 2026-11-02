@@ -176,17 +176,22 @@ async function redeemKey(req, res) {
       subscriptionEndsAt = endDate.toISOString();
     }
 
-    // Enregistrer la rédemption
-    await fdb.add('keyRedemptions', {
-      key_id: licenseKey.id,
-      user_id: String(userId),
-      redeemed_at: new Date().toISOString()
-    });
-
-    // Incrémenter le compteur
-    await fdb.update('licenseKeys', licenseKey.id, {
-      uses_count: fdb.increment(1)
-    });
+    // Consommer une utilisation de façon ATOMIQUE (évite qu'une clé à usage unique
+    // soit activée plusieurs fois par des requêtes simultanées)
+    const claimed = await fdb.claimLicenseUse(licenseKey.id);
+    if (!claimed) {
+      return res.status(409).json({ error: 'Cette clé a déjà été utilisée le nombre maximum de fois.' });
+    }
+    try {
+      await fdb.add('keyRedemptions', {
+        key_id: licenseKey.id,
+        user_id: String(userId),
+        redeemed_at: new Date().toISOString()
+      });
+    } catch (e) {
+      await fdb.releaseLicenseUse(licenseKey.id); // e.g. unique index: already redeemed by this user
+      return res.status(409).json({ error: 'Vous avez déjà utilisé cette clé.' });
+    }
 
     // Mettre à jour le plan de l'utilisateur
     await fdb.update('users', userId, {

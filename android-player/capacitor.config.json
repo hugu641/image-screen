@@ -3,10 +3,10 @@
   "appName": "ImageScreen TV",
   "webDir": "../frontend/dist-tv",
   "android": {
-    "allowMixedContent": true
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
   },
   "server": {
-    "androidScheme": "http",
-    "cleartext": true
+    "androidScheme": "http"
   }
 }

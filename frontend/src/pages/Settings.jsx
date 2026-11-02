@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Layout from '../layouts/Layout';
-import { api } from '../services/api';
+import { api, mediaUrl } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import { getServerUrl, isNativeApp, clearServerUrl } from '../services/serverConfig';
 import {
@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 
 export default function Settings() {
-  const { changePassword } = useAuth();
+  const { changePassword, mustChangePassword, isAdmin } = useAuth();
   
   // Settings Form state
   const [storeName, setStoreName] = useState('');
@@ -80,6 +80,10 @@ export default function Settings() {
       setPasswordStatus({ error: 'Les nouveaux mots de passe ne correspondent pas.', success: '', loading: false });
       return;
     }
+    if (newPassword.length < 8) {
+      setPasswordStatus({ error: 'Le nouveau mot de passe doit contenir au moins 8 caractères.', success: '', loading: false });
+      return;
+    }
 
     try {
       await changePassword(currentPassword, newPassword);
@@ -121,6 +125,17 @@ export default function Settings() {
   return (
     <Layout>
       <div className="space-y-6">
+        {mustChangePassword && (
+          <div role="alert" className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm">
+            <strong>Action requise :</strong> ce compte utilise un mot de passe connu publiquement ou temporaire.
+            Choisissez un nouveau mot de passe (8 caractères minimum) pour continuer à utiliser l'application.
+          </div>
+        )}
+        {!isAdmin && (
+          <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700 text-slate-400 text-xs">
+            Les paramètres du magasin ne peuvent être modifiés que par un administrateur.
+          </div>
+        )}
         {/* Header */}
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-white">Paramètres</h1>
@@ -192,7 +207,7 @@ export default function Settings() {
                   <div className="w-16 h-16 rounded-xl bg-slate-950 flex items-center justify-center border border-slate-800 overflow-hidden relative shrink-0">
                     {logo ? (
                       <img
-                        src={logo}
+                        src={mediaUrl(logo)}
                         alt="Logo"
                         className="w-full h-full object-contain p-1"
                       />

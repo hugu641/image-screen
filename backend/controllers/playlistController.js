@@ -57,14 +57,31 @@ async function writePlaylistItems(playlistId, mediaIds) {
   await fdb.update('playlists', playlistId, { items });
 }
 
+// ─── Input validation ─────────────────────────────────────────────────────────
+const TRANSITIONS = ['fade', 'zoom', 'slide'];
+
+/** Returns { error } or sanitized { name, duration, transition, mediaIds }. */
+function sanitizePlaylistInput({ name, duration, transition, mediaIds }) {
+  if (typeof name !== 'string' || name.trim() === '') return { error: 'Le nom de la playlist est obligatoire.' };
+  const cleanName = name.trim().slice(0, 100);
+  const d = Number(duration);
+  const cleanDuration = Number.isFinite(d) && d > 0 ? Math.min(Math.round(d), 3600) : 5;
+  const cleanTransition = TRANSITIONS.includes(transition) ? transition : 'fade';
+  let ids = [];
+  if (mediaIds !== undefined && mediaIds !== null) {
+    if (!Array.isArray(mediaIds) || mediaIds.length > 1000) return { error: 'Liste de médias invalide.' };
+    ids = mediaIds.map((m) => String(m).slice(0, 64));
+  }
+  return { name: cleanName, duration: cleanDuration, transition: cleanTransition, mediaIds: ids };
+}
+
 // ─── Actions ──────────────────────────────────────────────────────────────────
 
 async function createPlaylist(req, res) {
-  const { name, duration, transition, random_order, loop_playback, mediaIds } = req.body;
-
-  if (!name || name.trim() === '') {
-    return res.status(400).json({ error: 'Le nom de la playlist est obligatoire.' });
-  }
+  const { random_order, loop_playback } = req.body || {};
+  const input = sanitizePlaylistInput(req.body || {});
+  if (input.error) return res.status(400).json({ error: input.error });
+  const { name, duration, transition, mediaIds } = input;
 
   try {
     const existing = await fdb.getWhere('playlists', [{ field: 'name', value: name }]);
@@ -124,11 +141,10 @@ async function getPlaylist(req, res) {
 
 async function updatePlaylist(req, res) {
   const { id } = req.params;
-  const { name, duration, transition, random_order, loop_playback, mediaIds } = req.body;
-
-  if (!name || name.trim() === '') {
-    return res.status(400).json({ error: 'Le nom de la playlist est requis.' });
-  }
+  const { random_order, loop_playback } = req.body || {};
+  const input = sanitizePlaylistInput(req.body || {});
+  if (input.error) return res.status(400).json({ error: input.error });
+  const { name, duration, transition, mediaIds } = input;
 
   try {
     const playlist = await fdb.getById('playlists', id);

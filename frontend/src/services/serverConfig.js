@@ -36,6 +36,29 @@ export function normalizeServerUrl(input) {
   }
 }
 
+/** True for hosts that only exist on a local network (where plain HTTP is acceptable). */
+export function isPrivateHost(hostname) {
+  const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!h) return false;
+  if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.lan') || h.endsWith('.home.arpa')) return true;
+  if (!h.includes('.') && !h.includes(':')) return true; // single-label intranet name
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])];
+    return a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
+  }
+  if (h.includes(':')) return h === '::1' || /^f[cd]/.test(h) || h.startsWith('fe80');
+  return false;
+}
+
+/** Plain HTTP would expose the login token: only allow it on local networks. */
+export function assertTransportIsSafe(origin) {
+  const url = new URL(origin);
+  if (url.protocol === 'http:' && !isPrivateHost(url.hostname)) {
+    throw new Error('Pour un serveur accessible sur Internet, utilisez une adresse en https:// (connexion chiffrée).');
+  }
+}
+
 /** True when running inside Electron, Capacitor or any file:// wrapper. */
 export function isNativeApp() {
   if (typeof window === 'undefined') return false;
@@ -70,6 +93,7 @@ export function needsServerSetup() {
 export function setServerUrl(url) {
   const normalized = normalizeServerUrl(url);
   if (!normalized) throw new Error('Adresse invalide.');
+  assertTransportIsSafe(normalized);
   localStorage.setItem(STORAGE_KEY, normalized);
   return normalized;
 }
@@ -93,6 +117,7 @@ export function mediaUrl(path) {
 export async function testServer(input, timeoutMs = 6000) {
   const origin = normalizeServerUrl(input);
   if (!origin) throw new Error("Adresse invalide. Exemple : 192.168.1.50:5000 ou image-screen.app");
+  assertTransportIsSafe(origin);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

@@ -29,3 +29,12 @@ uploads/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Secrets & runtime data (never commit)
+.env1
+.env[0-9]*
+*.secret
+jwt.secret
+serviceAccountKey.json
+backend/uploads/
+backend/data/

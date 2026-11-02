@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getServerUrl } from '../services/serverConfig';
+import QrCode from './QrCode';
 
 /**
  * OnboardingTutorial
@@ -19,9 +20,6 @@ export default function OnboardingTutorial({ storeName, logoUrl, pairingCode, on
 
   if (!show) return null;
 
-  // Generate QR code image via a public API – no extra dependencies needed.
-  const qrData = encodeURIComponent(`code=${pairingCode}`);
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${qrData}`;
 
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-50">
@@ -39,8 +37,7 @@ export default function OnboardingTutorial({ storeName, logoUrl, pairingCode, on
           Scannez ce QR‑code avec votre appareil mobile pour associer l’écran.
         </p>
         <div className="flex justify-center mb-6">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={qrUrl} alt="QR code de couplage" className="w-48 h-48" />
+          <QrCode value={`code=${pairingCode}`} alt="QR code de couplage" className="w-48 h-48" />
         </div>
         <p className="text-center text-slate-300 mb-2">Vous pouvez également vous connecter via le lien suivant :</p>
         <div className="flex justify-center mb-4">

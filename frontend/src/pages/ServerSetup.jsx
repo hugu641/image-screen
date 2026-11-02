@@ -30,7 +30,9 @@ export default function ServerSetup() {
       setStatus({ loading: false, error: '', ok: true });
       // Reload so the socket and API clients pick up the new server cleanly.
       setTimeout(() => {
-        const target = new URLSearchParams(location.search).get('next') || '/';
+        // Only in-app paths are allowed as redirect target (no open redirect via //evil.com or /\evil.com)
+        const requested = new URLSearchParams(location.search).get('next') || '/';
+        const target = /^\/(?![/\\])[\w\-./?=&#%]*$/.test(requested) ? requested : '/';
         if (window.location.protocol === 'file:') {
           window.location.hash = `#${target}`;
           window.location.reload();

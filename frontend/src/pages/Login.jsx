@@ -42,6 +42,21 @@ export default function Login() {
     loadSettings();
   }, [isAuthenticated, navigate]);
 
+  // Does this server accept sign-ups? (closed by default; the very first account is the admin)
+  const [authStatus, setAuthStatus] = useState({ needsSetup: false, registrationOpen: false });
+  useEffect(() => {
+    let cancelled = false;
+    api.get('/auth/status')
+      .then((s) => {
+        if (cancelled) return;
+        setAuthStatus(s);
+        if (s.needsSetup) setMode('register');
+        else if (!s.registrationOpen) setMode('login');
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   // Reset errors on mode change
   const switchMode = (m) => {
     setMode(m);
@@ -61,8 +76,8 @@ export default function Login() {
         setError('Les mots de passe ne correspondent pas.');
         return;
       }
-      if (password.length < 6) {
-        setError('Le mot de passe doit contenir au moins 6 caractères.');
+      if (password.length < 8) {
+        setError('Le mot de passe doit contenir au moins 8 caractères.');
         return;
       }
     }
@@ -120,7 +135,7 @@ export default function Login() {
           )}
           <h1 className="text-2xl font-bold tracking-tight text-white">{storeName}</h1>
           <p className="text-sm text-slate-400 mt-1">
-            {isRegister ? 'Créez votre compte gratuit' : 'Espace Administration'}
+            {isRegister ? (authStatus.needsSetup ? 'Créez le compte administrateur' : 'Créez votre compte') : 'Espace Administration'}
           </p>
         </div>
 
@@ -148,16 +163,18 @@ export default function Login() {
             >
               Se connecter
             </button>
-            <button
-              onClick={() => switchMode('register')}
-              className={`flex-1 py-3.5 text-sm font-semibold transition-all ${
-                isRegister
-                  ? 'text-white border-b-2 border-brand-500 -mb-px bg-brand-500/5'
-                  : 'text-slate-500 hover:text-slate-300'
-              }`}
-            >
-              Créer un compte
-            </button>
+            {authStatus.registrationOpen && (
+              <button
+                onClick={() => switchMode('register')}
+                className={`flex-1 py-3.5 text-sm font-semibold transition-all ${
+                  isRegister
+                    ? 'text-white border-b-2 border-brand-500 -mb-px bg-brand-500/5'
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {authStatus.needsSetup ? 'Créer le compte administrateur' : 'Créer un compte'}
+              </button>
+            )}
           </div>
 
           <div className="p-8">
@@ -201,7 +218,7 @@ export default function Login() {
                   <input
                     type="email"
                     required
-                    placeholder={isRegister ? 'vous@exemple.fr' : 'admin@magasin.local'}
+                    placeholder="vous@exemple.fr"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full pl-10 pr-4 py-3 rounded-lg glass-input text-sm"
@@ -221,7 +238,7 @@ export default function Login() {
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
-                    placeholder={isRegister ? 'Min. 6 caractères' : '••••••••'}
+                    placeholder={isRegister ? 'Min. 8 caractères' : '••••••••'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full pl-10 pr-10 py-3 rounded-lg glass-input text-sm"
@@ -284,7 +301,9 @@ export default function Login() {
 
             {/* Footer hint */}
             <p className="text-center text-xs text-slate-600 mt-6">
-              {isRegister ? (
+              {!authStatus.registrationOpen ? (
+                <>Les inscriptions sont fermées. Demandez un accès à l'administrateur.</>
+              ) : isRegister ? (
                 <>
                   Déjà un compte ?{' '}
                   <button onClick={() => switchMode('login')} className="text-brand-400 hover:text-brand-300 transition-colors font-medium">
