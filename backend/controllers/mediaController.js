@@ -37,6 +37,13 @@ async function uploadMedia(req, res) {
         fs.mkdirSync(uploadsDir, { recursive: true });
       }
 
+      // Storage quota (disk-filling protection)
+      const maxBytes = (Number(process.env.MAX_STORAGE_MB) || 20480) * 1024 * 1024;
+      const incoming = req.files.reduce((n, f) => n + f.size, 0);
+      if ((await fdb.sumMediaSize()) + incoming > maxBytes) {
+        return res.status(413).json({ error: "Espace de stockage plein. Supprimez des médias avant d'en ajouter." });
+      }
+
       for (const file of req.files) {
         // The type is decided by the file CONTENT, not by what the client declared
         const detected = detectFileType(file.buffer);

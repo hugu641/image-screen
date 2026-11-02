@@ -11,6 +11,51 @@ const SCREEN_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const SCREEN_TOKEN_RE = /^[A-Za-z0-9_-]{32,128}$/;
 const PAIRING_CODE_RE = /^[A-Z0-9]{6}$/;
 
+// ─── Abuse protection ───────────────────────────────────────────────────────
+// Screens connect without an account (that is how pairing works), so anonymous traffic is
+// throttled: connections per IP, new screens per IP, a cap on never-paired screens, and a
+// per-socket event budget.
+const MAX_PENDING_SCREENS = Number(process.env.MAX_PENDING_SCREENS) || 50;
+const CONNECTIONS_PER_MIN = Number(process.env.SOCKET_CONNECTIONS_PER_MIN) || 120;
+const NEW_SCREENS_PER_HOUR = Number(process.env.NEW_SCREENS_PER_HOUR) || 30;
+const windows = new Map(); // `${kind}:${ip}` -> { count, resetAt }
+
+/** Fixed-window counter. Returns true when the action is allowed. */
+function allow(kind, ip, limit, windowMs) {
+  const key = `${kind}:${ip}`;
+  const now = Date.now();
+  let w = windows.get(key);
+  if (!w || w.resetAt <= now) {
+    w = { count: 0, resetAt: now + windowMs };
+    windows.set(key, w);
+  }
+  w.count += 1;
+  return w.count <= limit;
+}
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, w] of windows) if (w.resetAt <= now) windows.delete(k);
+}, 60 * 1000).unref();
+
+/** Per-socket token bucket: 30 events burst, 5 events/s sustained; gross abuse = disconnect. */
+function throttleSocketEvents(socket) {
+  let tokens = 30;
+  let last = Date.now();
+  let dropped = 0;
+  socket.use((packet, next) => {
+    const now = Date.now();
+    tokens = Math.min(30, tokens + ((now - last) / 1000) * 5);
+    last = now;
+    if (tokens >= 1) {
+      tokens -= 1;
+      return next();
+    }
+    dropped += 1;
+    if (dropped > 200) socket.disconnect(true);
+    // event silently dropped
+  });
+}
+
 function hashToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
@@ -38,6 +83,9 @@ function publicScreen(screen) {
  */
 async function authenticate(socket, next) {
   try {
+    if (!allow('conn', socketClientIp(socket), CONNECTIONS_PER_MIN, 60 * 1000)) {
+      return next(new Error('rate_limited'));
+    }
     const { type, screenId } = socket.handshake.query;
     const auth = socket.handshake.auth || {};
 
@@ -91,6 +139,8 @@ function init(server, allowedOrigins = null) {
   io.use(authenticate);
 
   io.on('connection', (socket) => {
+    throttleSocketEvents(socket);
+
     if (socket.data.role === 'admin') {
       socket.join('admins');
       console.log(`Admin connected: ${socket.id}`);
@@ -118,7 +168,14 @@ function init(server, allowedOrigins = null) {
         const existing = await fdb.getById('screens', id);
 
         if (!existing) {
-          // New screen: create with a fixed id and remember the device secret
+          // New screen. Anonymous clients may only create a limited number of pending screens.
+          if (!allow('newscreen', ipAddress, NEW_SCREENS_PER_HOUR, 60 * 60 * 1000) ||
+              (await fdb.countPendingScreens()) >= MAX_PENDING_SCREENS) {
+            socket.emit('screen:error', { code: 'too_many_pending_screens' });
+            socket.disconnect(true);
+            return;
+          }
+          // Create with a fixed id and remember the device secret
           await fdb.set('screens', id, {
             id,
             name: name || `Écran ${code}`,

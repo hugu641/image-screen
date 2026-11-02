@@ -32,8 +32,8 @@ export function AuthProvider({ children }) {
     loadUser();
   }, []);
 
-  const register = async (email, password, name) => {
-    const data = await api.post('/auth/register', { email, password, name });
+  const register = async (email, password, name, setupToken) => {
+    const data = await api.post('/auth/register', { email, password, name, setupToken });
     localStorage.setItem('token', data.token);
     localStorage.setItem('user', JSON.stringify(data.user));
     disconnectSocket(); // reconnect with the new credentials

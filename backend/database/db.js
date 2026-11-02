@@ -1,6 +1,7 @@
 const sqlite3 = require('sqlite3').verbose();
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
 const { DB_PATH } = require('../config/paths');
 
 const db = new sqlite3.Database(DB_PATH);
@@ -203,6 +204,34 @@ const firestoreHelpers = {
     await query.run(sql, params);
   },
 
+  /** Screens waiting to be paired (not associated yet). */
+  async countPendingScreens() {
+    const row = await query.get('SELECT COUNT(*) AS n FROM screens WHERE is_associated IS NULL OR is_associated = 0');
+    return row ? row.n : 0;
+  },
+
+  async sumMediaSize() {
+    const row = await query.get('SELECT COALESCE(SUM(size), 0) AS total FROM media');
+    return row ? row.total : 0;
+  },
+
+  /** Housekeeping: drop never-paired screens inactive since `cutoffIso`, and old log rows. */
+  async pruneStalePendingScreens(cutoffIso) {
+    const r = await query.run(
+      'DELETE FROM screens WHERE (is_associated IS NULL OR is_associated = 0) AND COALESCE(last_activity, created_at, \'\') < ?',
+      [cutoffIso]
+    );
+    return r.changes;
+  },
+
+  async pruneEvents(keep = 5000) {
+    const r = await query.run(
+      'DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY COALESCE(timestamp, created_at) DESC LIMIT ?)',
+      [keep]
+    );
+    return r.changes;
+  },
+
   async count(collection) {
     const row = await query.get(`SELECT COUNT(*) AS n FROM ${table(collection)}`);
     return row ? row.n : 0;
@@ -388,6 +417,11 @@ async function initDb() {
         );
         console.warn(`⚠️  Account ${email} still uses a publicly known default password: a password change is now required.`);
       }
+    }
+
+    // The database holds password hashes: keep it private even if it pre-dates the umask
+    for (const suffix of ['', '-journal', '-wal', '-shm']) {
+      try { fs.chmodSync(DB_PATH + suffix, 0o600); } catch { /* file may not exist */ }
     }
 
     console.log('✅  SQLite Database successfully initialized.');

@@ -43,7 +43,8 @@ export default function Login() {
   }, [isAuthenticated, navigate]);
 
   // Does this server accept sign-ups? (closed by default; the very first account is the admin)
-  const [authStatus, setAuthStatus] = useState({ needsSetup: false, registrationOpen: false });
+  const [authStatus, setAuthStatus] = useState({ needsSetup: false, needsSetupToken: false, registrationOpen: false });
+  const [setupToken, setSetupToken] = useState('');
   useEffect(() => {
     let cancelled = false;
     api.get('/auth/status')
@@ -85,7 +86,7 @@ export default function Login() {
     setLoading(true);
     try {
       if (mode === 'register') {
-        await register(email, password, name);
+        await register(email, password, name, setupToken);
       } else {
         await login(email, password);
       }
@@ -185,6 +186,22 @@ export default function Login() {
             )}
 
             <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Installation code (first admin account on a protected server) */}
+              {isRegister && authStatus.needsSetupToken && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5">Code d'installation</label>
+                  <input
+                    type="password"
+                    value={setupToken}
+                    onChange={(e) => setSetupToken(e.target.value)}
+                    autoComplete="off"
+                    required
+                    placeholder="Valeur de SETUP_TOKEN"
+                    className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 text-sm text-white focus:border-brand-500 focus:outline-none"
+                  />
+                </div>
+              )}
+
               {/* Name field (register only) */}
               {isRegister && (
                 <div>

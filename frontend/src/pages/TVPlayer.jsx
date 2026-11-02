@@ -139,6 +139,13 @@ export default function TVPlayer() {
       setIsOnline(false);
     });
 
+    // The server refuses new unpaired screens when too many are already waiting
+    socket.on('screen:error', (e) => {
+      if (e?.code === 'too_many_pending_screens') {
+        setStatusMessage("Trop d'écrans en attente sur ce serveur. Réessayez plus tard.");
+      }
+    });
+
     // Association event
     socket.on('screen:associated', async (data) => {
       if (!data.name) {

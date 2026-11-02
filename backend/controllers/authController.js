@@ -17,6 +17,18 @@ const ALLOWED_WHILE_PASSWORD_CHANGE = new Set(['/auth/me', '/auth/update-passwor
 
 let firstUserLock = false;
 
+const crypto = require('crypto');
+
+/** Optional SETUP_TOKEN protects the creation of the very first (admin) account. */
+function setupTokenRequired() {
+  return !!(process.env.SETUP_TOKEN || '').trim();
+}
+function setupTokenMatches(candidate) {
+  const expected = Buffer.from((process.env.SETUP_TOKEN || '').trim());
+  const given = Buffer.from(typeof candidate === 'string' ? candidate.trim() : '');
+  return expected.length > 0 && given.length === expected.length && crypto.timingSafeEqual(expected, given);
+}
+
 function registrationAllowedByConfig() {
   return String(process.env.ALLOW_REGISTRATION || '').toLowerCase() === 'true';
 }
@@ -53,7 +65,11 @@ function publicUser(user) {
 async function status(req, res) {
   try {
     const total = await fdb.count('users');
-    res.json({ needsSetup: total === 0, registrationOpen: total === 0 || registrationAllowedByConfig() });
+    res.json({
+      needsSetup: total === 0,
+      needsSetupToken: total === 0 && setupTokenRequired(),
+      registrationOpen: total === 0 || registrationAllowedByConfig(),
+    });
   } catch (error) {
     console.error('Auth status error:', error);
     res.status(500).json({ error: 'Erreur serveur.' });
@@ -84,6 +100,9 @@ async function register(req, res) {
 
   try {
     const isFirstUser = (await fdb.count('users')) === 0;
+    if (isFirstUser && setupTokenRequired() && !setupTokenMatches(req.body?.setupToken)) {
+      return res.status(403).json({ error: "Code d'installation invalide (variable SETUP_TOKEN du serveur)." });
+    }
     if (!isFirstUser && !registrationAllowedByConfig()) {
       return res.status(403).json({
         error: "Les inscriptions sont fermées. Demandez un accès à l'administrateur.",

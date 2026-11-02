@@ -27,6 +27,18 @@ async function createKey(req, res) {
   if (!plan || !PLAN_LABELS[plan]) {
     return res.status(400).json({ error: 'Plan invalide. Valeurs: starter, pro, enterprise, trial' });
   }
+  const intOrNull = (v, min, max) => (v === undefined || v === null || v === '' ? null : (Number.isInteger(Number(v)) && Number(v) >= min && Number(v) <= max ? Number(v) : NaN));
+  const days = intOrNull(duration_days, 1, 3650);
+  const uses = intOrNull(max_uses, 1, 100000) ?? 1;
+  if (Number.isNaN(days) || Number.isNaN(uses)) {
+    return res.status(400).json({ error: 'Durée (1-3650 jours) ou nombre d\'utilisations (1-100000) invalide.' });
+  }
+  if (expires_at && Number.isNaN(Date.parse(expires_at))) {
+    return res.status(400).json({ error: "Date d'expiration invalide." });
+  }
+  if (note !== undefined && note !== null && (typeof note !== 'string' || note.length > 200)) {
+    return res.status(400).json({ error: 'Note invalide (200 caractères maximum).' });
+  }
 
   const key = generateKey(plan);
 
@@ -34,8 +46,8 @@ async function createKey(req, res) {
     const newId = await fdb.add('licenseKeys', {
       key,
       plan,
-      duration_days: duration_days || null,
-      max_uses,
+      duration_days: days,
+      max_uses: uses,
       uses_count: 0,
       note: note || null,
       created_by: String(createdBy),

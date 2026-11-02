@@ -1,3 +1,6 @@
+// Never run in development mode by accident: dev mode leaks stack traces to clients
+process.env.NODE_ENV = process.env.NODE_ENV || 'production';
+
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
@@ -9,7 +12,7 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const helmet = require('helmet');
-const { initDb } = require('./database/db');
+const { initDb, fdb } = require('./database/db');
 const { UPLOADS_DIR } = require('./config/paths');
 require('./config/secrets'); // fail fast / generate the JWT secret before serving requests
 const { parseAllowedOrigins, originOption, trustProxySetting } = require('./config/network');
@@ -82,7 +85,24 @@ app.use('/uploads', express.static(UPLOADS_DIR, {
 }));
 
 // ─── REST API ────────────────────────────────────────────────────────────────
+// Warn once if the app sits behind a proxy but TRUST_PROXY is unset: every visitor would then
+// share the proxy's IP, so rate limits would apply to everyone at once.
+let warnedProxy = false;
+app.use((req, res, next) => {
+  if (!warnedProxy && req.headers['x-forwarded-for'] && !app.get('trust proxy')) {
+    warnedProxy = true;
+    console.warn('⚠️  X-Forwarded-For received but TRUST_PROXY is not set: behind a reverse proxy, set TRUST_PROXY=1 so rate limiting sees real client IPs.');
+  }
+  next();
+});
+
+// API responses (tokens, user data) must never be stored by browsers or shared caches
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 app.use('/api', apiRouter);
+app.use('/api', (req, res) => res.status(404).json({ error: 'Route introuvable.' }));
 
 // ─── Socket.IO ───────────────────────────────────────────────────────────────
 socketService.init(server, allowedOrigins);
@@ -117,12 +137,44 @@ if (fs.existsSync(frontendDist)) {
   });
 }
 
+// ─── Error handler ───────────────────────────────────────────────────────────
+// Never expose stack traces or internals to clients.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  const status = Number(err.status || err.statusCode) || 500;
+  if (status >= 500) console.error('Unhandled error:', err);
+  if (res.headersSent) return;
+  const messages = { 400: 'Requête invalide.', 413: 'Requête trop volumineuse.', 415: 'Type de contenu non supporté.' };
+  res.status(status >= 400 && status < 600 ? status : 500).json({ error: messages[status] || 'Erreur serveur.' });
+});
+
+// ─── Housekeeping ────────────────────────────────────────────────────────────
+// Remove screens that never got paired (spam / abandoned) and cap the event log.
+async function housekeeping() {
+  try {
+    const stale = await fdb.pruneStalePendingScreens(new Date(Date.now() - 24 * 3600 * 1000).toISOString());
+    const events = await fdb.pruneEvents(5000);
+    if (stale || events) console.log(`🧹  Housekeeping: ${stale} unpaired screen(s), ${events} old event(s) removed.`);
+  } catch (err) {
+    console.error('Housekeeping error:', err);
+  }
+}
+
 // ─── Startup ─────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 
 async function start() {
   console.log('🔥  Connecting to SQLite Database...');
   await initDb();
+  await housekeeping();
+  setInterval(housekeeping, 60 * 60 * 1000).unref();
+
+  if ((await fdb.count('users')) === 0) {
+    console.warn('⚠️  Aucun compte administrateur : le PREMIER compte créé devient administrateur.');
+    console.warn(process.env.SETUP_TOKEN
+      ? '    Un code d\'installation (SETUP_TOKEN) est exigé pour le créer.'
+      : '    Créez-le tout de suite, ou définissez SETUP_TOKEN si le serveur est accessible depuis Internet.');
+  }
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log('');
