@@ -1,33 +1,33 @@
 import { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { Server, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
-import {
-  getServerUrl,
-  isNativeApp,
-  needsServerSetup,
-  setServerUrl,
-  testServer,
-} from '../services/serverConfig';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { CheckCircle2, Globe, Server, ShieldCheck, Wifi } from 'lucide-react';
+import { getServerUrl, needsServerSetup, setServerUrl, testServer } from '../services/serverConfig';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import Button from '../components/ui/Button';
+import { Field, Input } from '../components/ui/Field';
+import { LogoMark } from '../components/ui/Logo';
+import { ThemeToggleButton } from '../components/ui/ThemeSwitch';
 
 /**
- * First-launch screen for the native apps (Electron / Android): the user enters the
- * address of their ImageScreen server once; it is validated, saved, and reused everywhere.
+ * First-launch screen for the native apps (Android / desktop): enter the address of your
+ * ImageScreen server once; it is validated, saved and reused everywhere.
  * Also reachable from Settings to change server later (/setup?change=1).
  */
 export default function ServerSetup() {
+  useDocumentTitle('Connexion au serveur');
   const navigate = useNavigate();
   const location = useLocation();
   const isChange = new URLSearchParams(location.search).has('change');
   const [value, setValue] = useState(isChange && !needsServerSetup() ? getServerUrl() : '');
-  const [status, setStatus] = useState({ loading: false, error: '', ok: false });
+  const [state, setState] = useState({ loading: false, error: '', ok: false });
 
   const submit = async (e) => {
     e.preventDefault();
-    setStatus({ loading: true, error: '', ok: false });
+    setState({ loading: true, error: '', ok: false });
     try {
       const origin = await testServer(value);
       setServerUrl(origin);
-      setStatus({ loading: false, error: '', ok: true });
+      setState({ loading: false, error: '', ok: true });
       // Reload so the socket and API clients pick up the new server cleanly.
       setTimeout(() => {
         // Only in-app paths are allowed as redirect target (no open redirect via //evil.com or /\evil.com)
@@ -39,85 +39,69 @@ export default function ServerSetup() {
         } else {
           window.location.href = target;
         }
-      }, 600);
+      }, 700);
     } catch (err) {
-      setStatus({ loading: false, error: err.message, ok: false });
+      setState({ loading: false, error: err.message, ok: false });
     }
   };
 
   return (
-    <div className="min-h-screen bg-dark-950 flex items-center justify-center p-6 text-slate-100">
-      <form
-        onSubmit={submit}
-        className="w-full max-w-md bg-slate-900/70 border border-slate-800 rounded-2xl p-8 space-y-6"
-      >
-        <div className="flex flex-col items-center text-center gap-3">
-          <div className="w-14 h-14 rounded-2xl bg-brand-500/15 flex items-center justify-center">
-            <Server className="w-7 h-7 text-brand-500" />
+    <div className="bg-aurora relative grid min-h-dvh place-items-center overflow-hidden bg-bg px-5 py-10">
+      <div className="bg-dots mask-fade-radial pointer-events-none absolute inset-0 opacity-60" aria-hidden="true" />
+      <div className="absolute right-4 top-4"><ThemeToggleButton /></div>
+
+      <form onSubmit={submit} className="card relative w-full max-w-md animate-rise p-7 sm:p-9">
+        <div className="mb-7 flex flex-col items-center text-center">
+          <div className="relative mb-5">
+            <div className="absolute inset-0 rounded-3xl bg-brand-gradient opacity-40 blur-xl" aria-hidden="true" />
+            <LogoMark className="relative size-16" />
           </div>
-          <h1 className="text-2xl font-bold">Connexion au serveur</h1>
-          <p className="text-sm text-slate-400">
-            Saisissez l’adresse de votre serveur ImageScreen, par exemple{' '}
-            <span className="font-mono text-slate-300">192.168.1.50:5000</span> ou{' '}
-            <span className="font-mono text-slate-300">image-screen.app</span>.
+          <h1 className="font-display text-2xl font-extrabold tracking-tight">Connexion au serveur</h1>
+          <p className="mt-2 text-sm leading-relaxed text-muted">
+            Saisissez l’adresse de votre serveur ImageScreen. Vous ne le ferez qu’une seule fois.
           </p>
         </div>
 
-        <div className="space-y-2">
-          <label htmlFor="server" className="text-xs font-semibold text-slate-400">
-            Adresse du serveur
-          </label>
-          <input
-            id="server"
-            autoFocus
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="192.168.1.50:5000"
-            inputMode="url"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 focus:outline-none font-mono text-sm"
-          />
-        </div>
-
-        {status.error && (
-          <div className="flex gap-2 items-start text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
-            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>{status.error}</span>
-          </div>
-        )}
-        {status.ok && (
-          <div className="flex gap-2 items-center text-sm text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
-            <CheckCircle2 className="w-4 h-4" />
-            <span>Serveur trouvé, connexion…</span>
-          </div>
-        )}
-
-        <button
-          type="submit"
-          disabled={status.loading || !value.trim()}
-          className="w-full py-3 rounded-xl bg-brand-500 hover:bg-brand-600 focus:outline-none focus:ring-4 focus:ring-white/70 disabled:opacity-50 font-semibold flex items-center justify-center gap-2"
+        <Field
+          label="Adresse du serveur"
+          error={state.error}
+          hint={!state.error ? 'Exemples : 192.168.1.50:5000 — image-screen.app' : undefined}
         >
-          {status.loading && <Loader2 className="w-4 h-4 animate-spin" />}
-          {status.loading ? 'Test en cours…' : 'Se connecter'}
-        </button>
+          {(p) => (
+            <Input
+              {...p}
+              icon={Globe}
+              autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder="192.168.1.50:5000"
+              inputMode="url"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              className="font-mono"
+            />
+          )}
+        </Field>
+
+        {state.ok && (
+          <div role="status" className="mt-4 flex animate-pop items-center gap-2.5 rounded-xl border border-success/25 bg-success/10 px-3.5 py-2.5 text-sm font-semibold text-success">
+            <CheckCircle2 className="size-4" /> Serveur trouvé, connexion…
+          </div>
+        )}
+
+        <Button type="submit" variant="primary" size="lg" className="mt-6 w-full focus-visible:ring-white/70" loading={state.loading} disabled={!value.trim() || state.ok} icon={Server}>
+          {state.loading ? 'Test en cours…' : 'Se connecter'}
+        </Button>
 
         {isChange && (
-          <button
-            type="button"
-            onClick={() => navigate(-1)}
-            className="w-full text-sm text-slate-400 hover:text-slate-200"
-          >
-            Annuler
-          </button>
+          <Button type="button" variant="ghost" className="mt-2 w-full" onClick={() => navigate(-1)}>Annuler</Button>
         )}
 
-        {!isNativeApp() && !isChange && (
-          <p className="text-xs text-center text-slate-500">
-            Dans le navigateur, l’application utilise automatiquement le serveur qui l’héberge.
-          </p>
-        )}
+        <ul className="mt-7 space-y-2.5 border-t border-line pt-6 text-[13px] text-muted">
+          <li className="flex items-center gap-2.5"><Wifi className="size-4 text-brand" /> Sur le réseau local, le HTTP simple est accepté.</li>
+          <li className="flex items-center gap-2.5"><ShieldCheck className="size-4 text-brand" /> Sur Internet, utilisez toujours une adresse en https://</li>
+        </ul>
       </form>
     </div>
   );

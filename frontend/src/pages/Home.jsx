@@ -1,536 +1,463 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Tv, Play, Shield, Wifi, WifiOff, Zap, Users, ChevronDown, Check, Star,
-  Monitor, ImageIcon, BarChart2, Globe, ArrowRight, Menu, X
+  ArrowRight,
+  BellRing,
+  ChevronDown,
+  Cloud,
+  Cpu,
+  Images,
+  Link2,
+  ListVideo,
+  Menu,
+  Monitor,
+  QrCode,
+  Radio,
+  ShieldCheck,
+  Tv,
+  WifiOff,
+  X,
+  Zap,
 } from 'lucide-react';
+import { LogoMark } from '../components/ui/Logo';
+import { ThemeToggleButton } from '../components/ui/ThemeSwitch';
+import { TvMock } from '../components/AuthShowcase';
+import Button from '../components/ui/Button';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { cn } from '../utils/cn';
 
-/* ─────────────────────────────────────────────
-   Helper: Animated counter on scroll
-───────────────────────────────────────────── */
-function AnimCounter({ to, suffix = '' }) {
-  const [val, setVal] = useState(0);
+/* ── Scroll reveal ────────────────────────────────────────────────────── */
+function Reveal({ children, className, delay = 0, as: Tag = 'div' }) {
+  const ref = useRef(null);
   useEffect(() => {
-    let start = 0;
-    const step = Math.ceil(to / 60);
-    const timer = setInterval(() => {
-      start += step;
-      if (start >= to) { setVal(to); clearInterval(timer); }
-      else setVal(start);
-    }, 16);
-    return () => clearInterval(timer);
-  }, [to]);
-  return <>{val.toLocaleString('fr-FR')}{suffix}</>;
+    const el = ref.current;
+    if (!el) return undefined;
+    if (!('IntersectionObserver' in window)) { el.classList.add('is-visible'); return undefined; }
+    const io = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { el.classList.add('is-visible'); io.disconnect(); }
+    }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return <Tag ref={ref} className={cn('reveal', className)} style={{ transitionDelay: `${delay}ms` }}>{children}</Tag>;
 }
 
-/* ─────────────────────────────────────────────
-   Data
-───────────────────────────────────────────── */
-const FEATURES = [
-  { icon: Tv, title: 'Gestion multi-écrans', desc: 'Pilotez autant d\'écrans que vous voulez depuis un seul tableau de bord, en temps réel.' },
-  { icon: WifiOff, title: 'Mode hors-ligne', desc: 'Vos contenus continuent de s\'afficher même sans connexion Internet grâce au cache local.' },
-  { icon: Zap, title: 'Mise à jour instantanée', desc: 'Changez de playlist ou de média et l\'écran se met à jour en quelques secondes.' },
-  { icon: Shield, title: 'Sécurisé', desc: 'Accès admin protégé par authentification, communication chiffrée entre serveur et écrans.' },
-  { icon: BarChart2, title: 'Planification', desc: 'Programmez vos diffusions par heure, par jour ou par événement avec une simplicité déconcertante.' },
-  { icon: Globe, title: 'Accessible partout', desc: 'Administrez vos écrans depuis n\'importe quel navigateur, sur réseau local ou Internet.' },
-];
+function SectionHead({ eyebrow, title, children }) {
+  return (
+    <Reveal className="mx-auto mb-14 max-w-2xl text-center">
+      <p className="eyebrow mb-3 text-brand">{eyebrow}</p>
+      <h2 className="font-display text-3xl font-extrabold leading-tight tracking-tight sm:text-4xl">{title}</h2>
+      {children && <p className="mt-4 text-base leading-relaxed text-muted">{children}</p>}
+    </Reveal>
+  );
+}
 
-const PLANS = [
-  {
-    name: 'Starter',
-    price: null,
-    priceLabel: 'Gratuit',
-    period: '3 jours d\'essai',
-    badge: 'Essai gratuit',
-    color: 'border-emerald-600/60',
-    badgeStyle: 'bg-emerald-500 text-white',
-    highlight: false,
-    cta: 'Créer un compte gratuit',
-    ctaStyle: 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
-    trialNote: 'Puis 9€/mois — Annulez quand vous voulez',
-    features: [
-      { text: '1 écran connecté', ok: true },
-      { text: 'Médiathèque 500 Mo', ok: true },
-      { text: 'Playlists illimitées', ok: true },
-      { text: 'Mode hors-ligne', ok: true },
-      { text: 'Support communauté', ok: true },
-      { text: 'Multi-utilisateurs', ok: false },
-      { text: 'Analytics avancés', ok: false },
-    ],
-  },
-  {
-    name: 'Pro',
-    price: '29',
-    priceLabel: null,
-    period: '/mois',
-    badge: 'Le plus populaire',
-    color: 'border-brand-500',
-    badgeStyle: 'bg-brand-500 text-white',
-    highlight: true,
-    cta: 'Essayer 14 jours gratuits',
-    ctaStyle: null,
-    trialNote: null,
-    features: [
-      { text: '10 écrans connectés', ok: true },
-      { text: 'Médiathèque 10 Go', ok: true },
-      { text: 'Playlists illimitées', ok: true },
-      { text: 'Mode hors-ligne', ok: true },
-      { text: 'Support prioritaire', ok: true },
-      { text: 'Multi-utilisateurs (3)', ok: true },
-      { text: 'Analytics avancés', ok: false },
-    ],
-  },
-  {
-    name: 'Enterprise',
-    price: '99',
-    priceLabel: null,
-    period: '/mois',
-    badge: 'Tout illimité',
-    color: 'border-violet-500',
-    badgeStyle: 'bg-violet-500 text-white',
-    highlight: false,
-    cta: 'Nous contacter',
-    ctaStyle: null,
-    trialNote: null,
-    features: [
-      { text: 'Écrans illimités', ok: true },
-      { text: 'Médiathèque illimitée', ok: true },
-      { text: 'Playlists illimitées', ok: true },
-      { text: 'Mode hors-ligne', ok: true },
-      { text: 'Support dédié 24/7', ok: true },
-      { text: 'Multi-utilisateurs illimité', ok: true },
-      { text: 'Analytics avancés', ok: true },
-    ],
-  },
-];
-
-const FAQS = [
-  { q: 'Comment connecter mon premier écran ?', a: 'Ouvrez l\'URL du lecteur TV sur votre écran (ex: http://votre-ip:5000/tv). Un code d\'appairage s\'affiche. Saisissez-le dans le panel admin pour associer l\'écran.' },
-  { q: 'Cela fonctionne-t-il sans Internet ?', a: 'Oui. Les médias sont mis en cache localement sur l\'écran. En cas de coupure réseau, la diffusion continue normalement.' },
-  { q: 'Quels formats de médias sont supportés ?', a: 'Images (JPG, PNG, GIF, WebP, SVG) et vidéos (MP4, WebM, MOV). Le transcodage automatique est disponible sur le plan Enterprise.' },
-  { q: 'Puis-je changer de plan à tout moment ?', a: 'Absolument. Vous pouvez monter ou descendre de plan à n\'importe quel moment depuis votre espace client.' },
-  { q: 'Faut-il une carte bancaire pour l\'essai ?', a: 'Non. L\'essai gratuit de 3 jours est accessible en créant simplement un compte. Aucune carte bancaire requise. Vous choisissez votre plan uniquement si vous souhaitez continuer.' },
-];
-
-/* ─────────────────────────────────────────────
-   Sub-components
-───────────────────────────────────────────── */
+/* ── Navbar ───────────────────────────────────────────────────────────── */
 function Navbar() {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 20);
-    window.addEventListener('scroll', onScroll);
+    const onScroll = () => setScrolled(window.scrollY > 12);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
+  const links = [['#features', 'Fonctionnalités'], ['#how', 'Comment ça marche'], ['#selfhost', 'Auto-hébergé'], ['#faq', 'FAQ']];
+
   return (
-    <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${scrolled ? 'bg-slate-950/90 backdrop-blur-lg shadow-lg shadow-black/20 border-b border-slate-800/60' : 'bg-transparent'}`}>
-      <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-        {/* Logo */}
+    <header className={cn('fixed inset-x-0 top-0 z-50 transition-all duration-300', scrolled || open ? 'glass border-b border-line' : 'border-b border-transparent')}>
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-6 px-5 sm:px-8">
+        <Link to="/" className="flex items-center gap-2.5" aria-label="ImageScreen — accueil">
+          <LogoMark className="size-9" />
+          <span className="font-display text-lg font-extrabold tracking-tight">ImageScreen</span>
+        </Link>
+
+        <nav className="hidden items-center gap-1 md:flex" aria-label="Sections">
+          {links.map(([href, label]) => (
+            <a key={href} href={href} className="rounded-lg px-3.5 py-2 text-sm font-semibold text-muted transition hover:bg-surface-2 hover:text-fg">{label}</a>
+          ))}
+        </nav>
+
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-violet-500 flex items-center justify-center">
-            <Monitor className="w-4 h-4 text-white" />
-          </div>
-          <span className="text-lg font-bold tracking-tight text-white">ImageScreen</span>
+          <ThemeToggleButton />
+          <Button to="/login" variant="primary" size="sm" className="hidden sm:inline-flex" iconRight={ArrowRight}>Se connecter</Button>
+          <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label="Menu" className="grid size-10 place-items-center rounded-xl text-muted transition hover:bg-surface-2 hover:text-fg md:hidden">
+            {open ? <X className="size-5" /> : <Menu className="size-5" />}
+          </button>
         </div>
-
-        {/* Desktop links */}
-        <div className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
-          <a href="#features" className="hover:text-white transition-colors">Fonctionnalités</a>
-          <a href="#pricing" className="hover:text-white transition-colors">Tarifs</a>
-          <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
-        </div>
-
-        {/* CTA */}
-        <div className="hidden md:flex items-center gap-3">
-          <Link to="/login" className="text-sm font-semibold text-slate-300 hover:text-white transition-colors">Se connecter</Link>
-          <Link to="/login?mode=register" className="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-semibold rounded-lg transition-all shadow-lg shadow-brand-500/20">
-            Essai gratuit
-          </Link>
-        </div>
-
-        {/* Mobile hamburger */}
-        <button onClick={() => setOpen(!open)} className="md:hidden p-2 text-slate-400 hover:text-white">
-          {open ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
       </div>
 
-      {/* Mobile menu */}
       {open && (
-        <div className="md:hidden bg-slate-950/95 backdrop-blur-lg border-t border-slate-800 px-6 py-4 space-y-4 text-sm font-medium">
-          <a href="#features" onClick={() => setOpen(false)} className="block text-slate-400 hover:text-white">Fonctionnalités</a>
-          <a href="#pricing" onClick={() => setOpen(false)} className="block text-slate-400 hover:text-white">Tarifs</a>
-          <a href="#faq" onClick={() => setOpen(false)} className="block text-slate-400 hover:text-white">FAQ</a>
-          <Link to="/login" className="block pt-2 border-t border-slate-800 text-slate-300 hover:text-white">Se connecter</Link>
-          <Link to="/login?mode=register" className="block px-4 py-2 bg-brand-500 text-white font-semibold rounded-lg text-center">Essai gratuit</Link>
+        <div className="animate-rise border-t border-line px-5 pb-5 pt-3 md:hidden">
+          {links.map(([href, label]) => (
+            <a key={href} href={href} onClick={() => setOpen(false)} className="block rounded-xl px-3 py-3 text-[15px] font-semibold text-muted hover:bg-surface-2 hover:text-fg">{label}</a>
+          ))}
+          <Button to="/login" variant="primary" className="mt-3 w-full">Se connecter</Button>
         </div>
       )}
-    </nav>
+    </header>
   );
 }
 
-function FaqItem({ q, a }) {
-  const [open, setOpen] = useState(false);
+/* ── Hero product mock ────────────────────────────────────────────────── */
+function DashboardMock() {
+  const screens = [
+    { name: 'TV Vitrine', pl: 'Promotions', on: true },
+    { name: 'TV Caisse', pl: 'Nouveautés', on: true },
+    { name: 'TV Hall', pl: 'Menu du midi', on: false },
+  ];
   return (
-    <div className="border border-slate-800 rounded-xl overflow-hidden">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-slate-900/40 transition-colors"
-      >
-        <span className="font-semibold text-slate-200 text-sm">{q}</span>
-        <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && (
-        <div className="px-6 pb-5 text-sm text-slate-400 leading-relaxed border-t border-slate-800/50">
-          <p className="pt-4">{a}</p>
+    <div className="card overflow-hidden shadow-pop">
+      <div className="flex items-center gap-2 border-b border-line bg-surface-2/60 px-4 py-3">
+        <span className="size-3 rounded-full bg-rose-400/80" /><span className="size-3 rounded-full bg-amber-400/80" /><span className="size-3 rounded-full bg-emerald-400/80" />
+        <div className="mx-auto hidden h-6 w-2/5 items-center justify-center rounded-md bg-surface-3/80 text-[10px] font-medium text-subtle sm:flex">imagescreen · tableau de bord</div>
+      </div>
+      <div className="grid grid-cols-[150px_1fr] sm:grid-cols-[170px_1fr]">
+        <div className="hidden space-y-1.5 border-r border-line bg-surface-2/40 p-3 sm:block">
+          <div className="mb-3 flex items-center gap-2 px-1"><LogoMark className="size-6" /><span className="text-[11px] font-extrabold">Mon Magasin</span></div>
+          {[['Tableau de bord', true], ['Écrans'], ['Playlists'], ['Médiathèque'], ['Paramètres']].map(([l, a]) => (
+            <div key={l} className={cn('flex items-center gap-2 rounded-lg px-2.5 py-2 text-[11px] font-semibold', a ? 'bg-primary/10 text-brand' : 'text-subtle')}>
+              <span className="size-3 rounded bg-current opacity-50" />{l}
+            </div>
+          ))}
         </div>
-      )}
+        <div className="col-span-2 space-y-3.5 p-4 sm:col-span-1 sm:p-5">
+          <div className="grid grid-cols-3 gap-2.5">
+            {[['2/3', 'Écrans en ligne', 'text-success'], ['24', 'Médias', 'text-brand'], ['4', 'Playlists', 'text-accent']].map(([n, l, c]) => (
+              <div key={l} className="rounded-xl border border-line bg-surface p-3">
+                <p className={cn('font-display text-xl font-extrabold leading-none', c)}>{n}</p>
+                <p className="mt-1.5 text-[10px] font-semibold text-subtle">{l}</p>
+              </div>
+            ))}
+          </div>
+          <div className="rounded-xl border border-line bg-surface p-1.5">
+            {screens.map((s) => (
+              <div key={s.name} className="flex items-center gap-3 rounded-lg px-2.5 py-2">
+                <div className={cn('grid size-8 place-items-center rounded-lg', s.on ? 'bg-success/10 text-success' : 'bg-surface-3 text-subtle')}><Tv className="size-4" /></div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-bold">{s.name}</p>
+                  <p className="truncate text-[10px] text-subtle">▶ {s.pl}</p>
+                </div>
+                <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold', s.on ? 'bg-success/10 text-success' : 'bg-surface-3 text-subtle')}>
+                  <span className="size-1.5 rounded-full bg-current" />{s.on ? 'En ligne' : 'Hors ligne'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-/* ─────────────────────────────────────────────
-   Main Page
-───────────────────────────────────────────── */
-export default function Home() {
+function Hero() {
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans overflow-x-hidden">
-      <Navbar />
-
-      {/* ── HERO ── */}
-      <section className="relative pt-32 pb-24 px-6 flex flex-col items-center text-center overflow-hidden">
-        {/* Background glow orbs */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[500px] bg-brand-600/10 rounded-full blur-[120px] pointer-events-none" />
-        <div className="absolute top-20 left-1/4 w-[300px] h-[300px] bg-violet-600/8 rounded-full blur-[80px] pointer-events-none" />
-
-        <div className="relative max-w-4xl mx-auto">
-          {/* Badge */}
-          <div className="inline-flex items-center gap-2 bg-brand-500/10 border border-brand-500/20 text-brand-400 text-xs font-semibold px-3 py-1 rounded-full mb-6">
-            <span className="w-1.5 h-1.5 rounded-full bg-brand-500 animate-pulse" />
-            Nouveau — Mode hors-ligne garanti
-          </div>
-
-          <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-6 leading-none">
-            Vos écrans publicitaires,{' '}
-            <span className="bg-gradient-to-r from-brand-400 via-violet-400 to-pink-400 bg-clip-text text-transparent">
-              pilotés à distance
+    <section className="bg-aurora relative overflow-hidden pt-32 sm:pt-40">
+      <div className="bg-dots mask-fade-radial pointer-events-none absolute inset-0 opacity-70" aria-hidden="true" />
+      <div className="relative mx-auto max-w-7xl px-5 sm:px-8">
+        <div className="mx-auto max-w-3xl text-center">
+          <Reveal>
+            <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/80 px-3.5 py-1.5 text-xs font-bold text-muted shadow-card backdrop-blur">
+              <span className="live-dot text-success" /> Fonctionne même sans Internet
             </span>
-          </h1>
-
-          <p className="text-lg md:text-xl text-slate-400 max-w-2xl mx-auto mb-10 leading-relaxed">
-            ImageScreen vous permet de gérer, planifier et diffuser vos contenus sur n'importe quel écran de votre magasin — en temps réel, même hors connexion.
-          </p>
-
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link
-              to="/login?mode=register"
-              className="group flex items-center gap-2 px-6 py-3.5 bg-brand-500 hover:bg-brand-600 text-white font-semibold rounded-xl text-sm transition-all shadow-xl shadow-brand-500/30 hover:shadow-brand-500/50 hover:-translate-y-0.5"
-            >
-              Créer un compte — 3 jours gratuits
-              <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-            </Link>
-            <a
-              href="#features"
-              className="flex items-center gap-2 px-6 py-3.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 font-semibold rounded-xl text-sm transition-all"
-            >
-              <Play className="w-4 h-4" />
-              Voir les fonctionnalités
-            </a>
-          </div>
+          </Reveal>
+          <Reveal delay={80}>
+            <h1 className="mt-7 font-display text-[40px] font-extrabold leading-[1.05] tracking-tight sm:text-6xl lg:text-7xl">
+              Diffusez vos réalisations sur{' '}
+              <span className="text-gradient">tous vos écrans</span>
+            </h1>
+          </Reveal>
+          <Reveal delay={160}>
+            <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">
+              ImageScreen transforme n’importe quelle télévision en écran d’affichage dynamique. Importez vos photos et vidéos,
+              composez vos playlists et pilotez tout en temps réel depuis votre navigateur.
+            </p>
+          </Reveal>
+          <Reveal delay={240} className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Button to="/login" variant="primary" size="lg" iconRight={ArrowRight} className="w-full sm:w-auto">Accéder à l’application</Button>
+            <Button href="#how" variant="secondary" size="lg" className="w-full sm:w-auto">Voir comment ça marche</Button>
+          </Reveal>
+          <Reveal delay={320} className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[13px] font-medium text-subtle">
+            {['Auto-hébergé', 'Vos données restent chez vous', 'Fire TV · Android TV · Smart TV'].map((t) => (
+              <span key={t} className="inline-flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-success" />{t}</span>
+            ))}
+          </Reveal>
         </div>
 
-        {/* Hero preview card */}
-        <div className="relative mt-20 w-full max-w-5xl mx-auto">
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent z-10 pointer-events-none" />
-          <div className="glass-card border border-slate-700/60 rounded-2xl p-4 overflow-hidden shadow-2xl shadow-black/50">
-            <div className="flex items-center gap-2 mb-3 px-2">
-              <span className="w-3 h-3 rounded-full bg-rose-500/70" />
-              <span className="w-3 h-3 rounded-full bg-amber-500/70" />
-              <span className="w-3 h-3 rounded-full bg-emerald-500/70" />
-              <span className="flex-1 mx-2 h-5 bg-slate-800/80 rounded text-[10px] text-slate-500 flex items-center px-2">localhost:5000/admin</span>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              {/* Mock sidebar */}
-              <div className="col-span-1 bg-slate-900/60 rounded-xl p-3 space-y-2">
-                {['Dashboard', 'Écrans', 'Playlists', 'Médiathèque', 'Paramètres'].map(label => (
-                  <div key={label} className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs font-medium ${label === 'Écrans' ? 'bg-brand-500/10 text-brand-400' : 'text-slate-500'}`}>
-                    <div className="w-3 h-3 rounded bg-current opacity-40" />
-                    {label}
-                  </div>
-                ))}
-              </div>
-              {/* Mock content */}
-              <div className="col-span-2 space-y-3">
-                <div className="grid grid-cols-3 gap-2">
-                  {[['3', 'Écrans actifs', 'emerald'], ['12', 'Médias', 'violet'], ['5', 'Playlists', 'pink']].map(([n, l, c]) => (
-                    <div key={l} className="bg-slate-900/60 rounded-xl p-3 text-center">
-                      <p className={`text-xl font-bold text-${c}-400`}>{n}</p>
-                      <p className="text-[10px] text-slate-500">{l}</p>
-                    </div>
-                  ))}
-                </div>
-                <div className="bg-slate-900/60 rounded-xl p-3">
-                  <p className="text-xs text-slate-500 mb-2 font-semibold uppercase tracking-wider">Écrans</p>
-                  {['TV Hall d\'entrée', 'TV Caisse', 'Vitrine'].map((name, i) => (
-                    <div key={name} className="flex items-center justify-between py-1.5 border-b border-slate-800/60 last:border-0">
-                      <div className="flex items-center gap-2">
-                        <Tv className="w-3 h-3 text-slate-500" />
-                        <span className="text-xs text-slate-300">{name}</span>
-                      </div>
-                      <span className={`text-[10px] font-bold ${i === 2 ? 'text-amber-400' : 'text-emerald-400'}`}>{i === 2 ? 'Hors ligne' : 'Connecté'}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+        {/* Product composition */}
+        <Reveal delay={200} className="relative mx-auto mt-16 max-w-5xl pb-20 sm:mt-20">
+          <div className="absolute inset-x-10 -bottom-4 top-20 rounded-[3rem] bg-brand-gradient opacity-20 blur-3xl" aria-hidden="true" />
+          <div className="relative [perspective:1600px]">
+            <div className="origin-bottom transition-transform duration-700 sm:[transform:rotateX(6deg)] sm:hover:[transform:rotateX(0deg)]">
+              <DashboardMock />
             </div>
           </div>
-        </div>
-      </section>
-
-      {/* ── STATS ── */}
-      <section className="py-16 px-6 border-y border-slate-800/50">
-        <div className="max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
-          {[
-            { n: 500, suffix: '+', label: 'Écrans déployés' },
-            { n: 99, suffix: '.9%', label: 'Temps de disponibilité' },
-            { n: 120, suffix: '+', label: 'Magasins clients' },
-            { n: 2, suffix: 's', label: 'Mise à jour en temps réel' },
-          ].map(({ n, suffix, label }) => (
-            <div key={label}>
-              <p className="text-4xl font-extrabold text-white mb-1">
-                <AnimCounter to={n} suffix={suffix} />
-              </p>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{label}</p>
+          <div className="absolute bottom-6 right-0 hidden w-[44%] sm:block lg:-right-8 lg:w-[40%]">
+            <TvMock className="animate-float shadow-pop" />
+          </div>
+          <div className="absolute -top-7 right-8 hidden animate-float items-center gap-3 rounded-2xl border border-line bg-surface/95 px-4 py-3 shadow-pop backdrop-blur-xl lg:flex">
+            <div className="grid size-9 place-items-center rounded-xl bg-primary/10 text-brand"><Link2 className="size-[18px]" /></div>
+            <div>
+              <p className="text-[13px] font-bold leading-tight">Nouvel écran détecté</p>
+              <p className="font-mono text-xs font-semibold tracking-widest text-muted">A7K9P2</p>
             </div>
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
+/* ── Compatibility strip ──────────────────────────────────────────────── */
+function Compat() {
+  const items = [['Fire TV Stick', Tv], ['Android TV', Tv], ['Smart TV', Monitor], ['Mini-PC kiosque', Cpu], ['Navigateur web', Cloud]];
+  return (
+    <section className="border-y border-line bg-surface/60">
+      <div className="mx-auto flex max-w-7xl flex-col items-center gap-5 px-5 py-8 sm:px-8 lg:flex-row lg:justify-between">
+        <p className="eyebrow">Fonctionne sur</p>
+        <ul className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
+          {items.map(([label, Icon]) => (
+            <li key={label} className="flex items-center gap-2.5 text-sm font-semibold text-muted"><Icon className="size-[18px] text-subtle" />{label}</li>
           ))}
-        </div>
-      </section>
+        </ul>
+      </div>
+    </section>
+  );
+}
 
-      {/* ── FEATURES ── */}
-      <section id="features" className="py-24 px-6">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-16">
-            <p className="text-brand-400 font-semibold text-sm uppercase tracking-wider mb-3">Fonctionnalités</p>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Tout ce qu'il vous faut, rien de superflu</h2>
-            <p className="text-slate-400 max-w-xl mx-auto">Un outil puissant pensé pour les commerçants et intégrateurs.</p>
-          </div>
+/* ── Features (bento) ─────────────────────────────────────────────────── */
+function Feature({ icon: Icon, title, children, className, tone = 'primary', delay = 0, visual }) {
+  const tones = { primary: 'bg-primary/10 text-brand', success: 'bg-success/10 text-success', accent: 'bg-accent/10 text-accent', info: 'bg-info/10 text-info', warning: 'bg-warning/10 text-warning' };
+  return (
+    <Reveal delay={delay} className={cn('card group relative overflow-hidden p-6 transition-all duration-300 hover:-translate-y-1 hover:border-primary/40 hover:shadow-pop sm:p-7', className)}>
+      <div className={cn('mb-5 grid size-11 place-items-center rounded-2xl', tones[tone])}><Icon className="size-5" /></div>
+      <h3 className="font-display text-lg font-bold tracking-tight">{title}</h3>
+      <p className="mt-2 text-sm leading-relaxed text-muted">{children}</p>
+      {visual}
+    </Reveal>
+  );
+}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {FEATURES.map(({ icon: Icon, title, desc }) => (
-              <div key={title} className="glass-card border border-slate-800 rounded-2xl p-6 hover:border-slate-700 transition-all hover:-translate-y-1 duration-200">
-                <div className="w-10 h-10 rounded-xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center mb-4">
-                  <Icon className="w-5 h-5 text-brand-400" />
-                </div>
-                <h3 className="font-semibold text-white mb-2">{title}</h3>
-                <p className="text-sm text-slate-400 leading-relaxed">{desc}</p>
-              </div>
+function Features() {
+  return (
+    <section id="features" className="mx-auto max-w-7xl scroll-mt-20 px-5 py-24 sm:px-8 sm:py-28">
+      <SectionHead eyebrow="Fonctionnalités" title="Tout ce qu’il faut, rien de superflu">
+        Un outil pensé pour les commerçants : simple à prendre en main, fiable au quotidien.
+      </SectionHead>
+
+      <div className="grid gap-5 md:grid-cols-6">
+        <Feature icon={Radio} title="Pilotage en temps réel" tone="success" className="md:col-span-4" visual={
+          <div className="mt-6 flex flex-wrap gap-2.5">
+            {[['TV Vitrine', true], ['TV Caisse', true], ['TV Hall', false]].map(([n, on]) => (
+              <span key={n} className={cn('inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold', on ? 'border-success/25 bg-success/10 text-success' : 'border-line bg-surface-2 text-subtle')}>
+                {on ? <span className="live-dot" /> : <WifiOff className="size-3" />}{n}
+              </span>
             ))}
           </div>
-        </div>
-      </section>
+        }>
+          Changez une playlist, renommez un écran ou forcez une synchronisation : la TV réagit en quelques secondes,
+          sans rechargement. Suivez l’état de chaque écran depuis le tableau de bord.
+        </Feature>
 
-      {/* ── HOW IT WORKS ── */}
-      <section className="py-24 px-6 bg-slate-900/30 border-y border-slate-800/50">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-16">
-            <p className="text-violet-400 font-semibold text-sm uppercase tracking-wider mb-3">Comment ça marche</p>
-            <h2 className="text-3xl md:text-4xl font-bold">En 3 étapes simples</h2>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 relative">
-            {/* connector */}
-            <div className="hidden md:block absolute top-8 left-[33%] right-[33%] h-px bg-gradient-to-r from-brand-500/50 to-violet-500/50" />
-            {[
-              { step: '01', icon: Monitor, title: 'Installez le lecteur', desc: 'Ouvrez l\'URL /tv sur votre écran. Un code d\'appairage s\'affiche automatiquement.' },
-              { step: '02', icon: Wifi, title: 'Associez l\'écran', desc: 'Dans le panel admin, saisissez le code d\'appairage ou scannez le QR code affiché.' },
-              { step: '03', icon: ImageIcon, title: 'Diffusez vos contenus', desc: 'Créez une playlist, ajoutez vos médias, affectez-la à l\'écran. C\'est tout !' },
-            ].map(({ step, icon: Icon, title, desc }) => (
-              <div key={step} className="flex flex-col items-center text-center relative z-10">
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-500/20 to-violet-500/20 border border-brand-500/30 flex items-center justify-center mb-4">
-                  <Icon className="w-7 h-7 text-brand-400" />
-                </div>
-                <span className="text-xs font-bold text-slate-600 mb-2">{step}</span>
-                <h3 className="font-semibold text-white mb-2">{title}</h3>
-                <p className="text-sm text-slate-400">{desc}</p>
+        <Feature icon={WifiOff} title="Mode hors ligne" tone="warning" className="md:col-span-2" delay={80}>
+          Les médias sont mis en cache sur la TV. Une coupure réseau n’interrompt pas la diffusion.
+        </Feature>
+
+        <Feature icon={ListVideo} title="Playlists soignées" tone="accent" className="md:col-span-2" delay={80}>
+          Ordre libre par glisser-déposer, durée par défaut, lecture aléatoire ou en boucle, transitions fondu, zoom ou glissement.
+        </Feature>
+
+        <Feature icon={Images} title="Médiathèque intelligente" tone="info" className="md:col-span-2" delay={160}>
+          Import par glisser-déposer. Les images sont redimensionnées et optimisées automatiquement pour la TV.
+        </Feature>
+
+        <Feature icon={QrCode} title="Association par code" tone="primary" className="md:col-span-2" delay={240}>
+          La TV affiche un code à 6 caractères et un QR code. Saisissez-le : l’écran est associé, sans configuration réseau.
+        </Feature>
+
+        <Feature icon={BellRing} title="Aperçu et journal d’activité" tone="success" className="md:col-span-3" delay={80}>
+          Voyez en direct ce qu’affiche chaque écran, et retrouvez l’historique des connexions et des modifications.
+        </Feature>
+
+        <Feature icon={ShieldCheck} title="Sécurisé et privé" tone="accent" className="md:col-span-3" delay={160}>
+          Comptes protégés, inscriptions fermées par défaut, fichiers contrôlés à l’import. Vos médias restent sur votre serveur.
+        </Feature>
+      </div>
+    </section>
+  );
+}
+
+/* ── How it works ─────────────────────────────────────────────────────── */
+function How() {
+  const steps = [
+    { icon: Monitor, title: 'Ouvrez le lecteur sur la TV', text: 'Dans le navigateur de la télévision, ouvrez l’adresse /tv de votre serveur. Un code d’association s’affiche.' },
+    { icon: Link2, title: 'Associez l’écran', text: 'Dans « Écrans », saisissez le code et donnez un nom à la TV. Elle apparaît immédiatement dans votre liste.' },
+    { icon: Zap, title: 'Diffusez', text: 'Importez vos médias, composez une playlist et affectez-la à l’écran. C’est en ligne dans la seconde.' },
+  ];
+  return (
+    <section id="how" className="scroll-mt-20 border-y border-line bg-surface-2/40 py-24 sm:py-28">
+      <div className="mx-auto max-w-6xl px-5 sm:px-8">
+        <SectionHead eyebrow="Comment ça marche" title="En ligne en trois étapes" />
+        <ol className="relative grid gap-6 md:grid-cols-3">
+          <div className="absolute left-[16%] right-[16%] top-8 hidden h-px bg-gradient-to-r from-transparent via-primary/40 to-transparent md:block" aria-hidden="true" />
+          {steps.map(({ icon: Icon, title, text }, i) => (
+            <Reveal as="li" key={title} delay={i * 100} className="relative text-center">
+              <div className="relative mx-auto mb-6 w-fit">
+                <div className="grid size-16 place-items-center rounded-3xl border border-line bg-surface text-brand shadow-card"><Icon className="size-7" /></div>
+                <span className="absolute -right-2 -top-2 grid size-7 place-items-center rounded-full bg-brand-gradient font-display text-xs font-extrabold text-white shadow-btn">{i + 1}</span>
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
+              <h3 className="font-display text-lg font-bold tracking-tight">{title}</h3>
+              <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-muted">{text}</p>
+            </Reveal>
+          ))}
+        </ol>
+      </div>
+    </section>
+  );
+}
 
-      {/* ── PRICING ── */}
-      <section id="pricing" className="py-24 px-6">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-16">
-            <p className="text-pink-400 font-semibold text-sm uppercase tracking-wider mb-3">Tarifs</p>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Un plan pour chaque besoin</h2>
-            <p className="text-slate-400 max-w-lg mx-auto">Commencez gratuitement — sans carte bancaire. Créez un compte et testez pendant 3 jours. Choisissez votre plan seulement si vous êtes convaincu.</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
-            {PLANS.map((plan) => (
-              <div
-                key={plan.name}
-                className={`relative glass-card rounded-2xl p-6 border-2 ${plan.color} flex flex-col ${plan.highlight ? 'shadow-2xl shadow-brand-500/20' : ''}`}
-              >
-                {plan.badge && (
-                  <div className={`absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-full whitespace-nowrap ${plan.badgeStyle || (plan.highlight ? 'bg-brand-500 text-white' : 'bg-violet-500 text-white')}`}>
-                    {plan.badge}
-                  </div>
-                )}
-
-                <div className="mb-6">
-                  <h3 className="text-xl font-bold text-white mb-2">{plan.name}</h3>
-                  <div className="flex items-baseline gap-1">
-                    {plan.priceLabel ? (
-                      <span className="text-4xl font-extrabold text-emerald-400">{plan.priceLabel}</span>
-                    ) : (
-                      <>
-                        <span className="text-4xl font-extrabold text-white">{plan.price}€</span>
-                        <span className="text-slate-500 text-sm">{plan.period}</span>
-                      </>
-                    )}
-                  </div>
-                  {plan.trialNote && (
-                    <p className="text-xs text-slate-500 mt-1.5">{plan.trialNote}</p>
-                  )}
-                </div>
-
-                <ul className="space-y-2.5 mb-8 flex-1">
-                  {plan.features.map((f) => (
-                    <li key={f.text} className="flex items-center gap-2.5 text-sm">
-                      <Check className={`w-4 h-4 shrink-0 ${f.ok ? 'text-emerald-400' : 'text-slate-700'}`} />
-                      <span className={f.ok ? 'text-slate-300' : 'text-slate-600'}>{f.text}</span>
-                    </li>
-                  ))}
-                </ul>
-
-                <Link
-                  to="/login?mode=register"
-                  className={`block text-center py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                    plan.ctaStyle
-                      ? plan.ctaStyle
-                      : plan.highlight
-                        ? 'bg-brand-500 hover:bg-brand-600 text-white shadow-lg shadow-brand-500/30'
-                        : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
-                  }`}
-                >
-                  {plan.cta}
-                </Link>
-              </div>
-            ))}
-          </div>
-
-          <p className="text-center text-xs text-slate-600 mt-8">
-            Tous les prix sont HT • TVA applicable selon la législation en vigueur • Facturation mensuelle ou annuelle (−20%)
+/* ── Self-hosted ──────────────────────────────────────────────────────── */
+function SelfHost() {
+  return (
+    <section id="selfhost" className="mx-auto max-w-7xl scroll-mt-20 px-5 py-24 sm:px-8 sm:py-28">
+      <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
+        <Reveal>
+          <p className="eyebrow mb-3 text-brand">Auto-hébergé</p>
+          <h2 className="font-display text-3xl font-extrabold leading-tight tracking-tight sm:text-4xl">Chez vous, sur votre matériel</h2>
+          <p className="mt-4 text-base leading-relaxed text-muted">
+            ImageScreen s’installe sur un PC Windows, Linux ou un NAS de votre magasin. La base de données est intégrée :
+            aucune configuration, aucun compte cloud, aucun abonnement.
           </p>
-        </div>
-      </section>
-
-      {/* ── TESTIMONIALS ── */}
-      <section className="py-24 px-6 bg-slate-900/30 border-y border-slate-800/50">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-16">
-            <p className="text-amber-400 font-semibold text-sm uppercase tracking-wider mb-3">Témoignages</p>
-            <h2 className="text-3xl md:text-4xl font-bold">Ce que disent nos clients</h2>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <ul className="mt-7 space-y-3.5">
             {[
-              { name: 'Marie D.', role: 'Gérante, Boulangerie Dupont', text: 'En 10 minutes, mon écran vitrine était configuré et diffusait mes promotions du jour. Incroyable simplicité.' },
-              { name: 'Julien P.', role: 'Responsable IT, Groupe GrandFresh', text: 'On gère 47 écrans sur 8 magasins depuis un seul dashboard. Le mode hors-ligne nous a sauvé lors d\'une panne FAI.' },
-              { name: 'Sophie L.', role: 'Directrice, Studio Forme+', text: 'Le QR code pour associer un nouvel écran, c\'est vraiment malin. Plus besoin d\'accès réseau local pour la mise en service.' },
-            ].map(({ name, role, text }) => (
-              <div key={name} className="glass-card border border-slate-800 rounded-2xl p-6">
-                <div className="flex gap-1 mb-4">
-                  {[...Array(5)].map((_, i) => <Star key={i} className="w-4 h-4 fill-amber-400 text-amber-400" />)}
-                </div>
-                <p className="text-sm text-slate-300 leading-relaxed mb-4">"{text}"</p>
-                <div>
-                  <p className="text-sm font-semibold text-white">{name}</p>
-                  <p className="text-xs text-slate-500">{role}</p>
-                </div>
-              </div>
+              ['Vos médias et vos données restent sur votre serveur', ShieldCheck],
+              ['Aucun service tiers : le QR code et les polices sont générés localement', Cloud],
+              ['Un seul script pour installer, compiler et démarrer', Zap],
+            ].map(([text, Icon]) => (
+              <li key={text} className="flex items-start gap-3 text-sm font-medium">
+                <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-lg bg-success/10 text-success"><Icon className="size-3.5" /></span>
+                {text}
+              </li>
             ))}
-          </div>
-        </div>
-      </section>
+          </ul>
+        </Reveal>
 
-      {/* ── FAQ ── */}
-      <section id="faq" className="py-24 px-6">
-        <div className="max-w-3xl mx-auto">
-          <div className="text-center mb-16">
-            <p className="text-emerald-400 font-semibold text-sm uppercase tracking-wider mb-3">FAQ</p>
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">Questions fréquentes</h2>
+        <Reveal delay={120} className="relative">
+          <div className="absolute -inset-4 rounded-[2.5rem] bg-brand-gradient opacity-15 blur-2xl" aria-hidden="true" />
+          <div data-theme="dark" className="relative overflow-hidden rounded-3xl border border-line bg-[#090a11] shadow-pop">
+            <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+              <span className="size-3 rounded-full bg-rose-400/80" /><span className="size-3 rounded-full bg-amber-400/80" /><span className="size-3 rounded-full bg-emerald-400/80" />
+              <span className="ml-2 text-xs font-medium text-subtle">terminal</span>
+            </div>
+            <pre className="overflow-x-auto p-5 font-mono text-[13px] leading-7 text-fg"><code>
+              <span className="text-subtle">$ </span><span className="text-brand">./start-production.sh</span>{'\n'}
+              <span className="text-success">✅ Serving React frontend from production build</span>{'\n'}
+              {'\n'}
+              <span className="text-muted">Administration </span> http://localhost:5000{'\n'}
+              <span className="text-muted">Lecteur TV     </span> http://192.168.1.50:5000/tv{'\n'}
+              {'\n'}
+              <span className="text-success">✓ Prêt — ouvrez le lecteur sur votre première TV</span>
+            </code></pre>
           </div>
-          <div className="space-y-3">
-            {FAQS.map((faq) => <FaqItem key={faq.q} {...faq} />)}
-          </div>
-        </div>
-      </section>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
 
-      {/* ── CTA BANNER ── */}
-      <section className="py-24 px-6">
-        <div className="max-w-3xl mx-auto text-center relative">
-          <div className="absolute inset-0 bg-gradient-to-r from-brand-600/20 via-violet-600/20 to-pink-600/20 rounded-3xl blur-xl pointer-events-none" />
-          <div className="relative glass-card border border-slate-700/60 rounded-3xl p-12">
-            <h2 className="text-3xl md:text-4xl font-extrabold mb-4">Prêt à moderniser votre affichage ?</h2>
-            <p className="text-slate-400 mb-8 max-w-lg mx-auto">Rejoignez des centaines de commerçants qui font confiance à ImageScreen. Testez gratuitement pendant 3 jours.</p>
-            <Link
-              to="/login?mode=register"
-              className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-brand-500 to-violet-500 hover:from-brand-600 hover:to-violet-600 text-white font-bold rounded-xl text-sm transition-all shadow-2xl shadow-brand-500/30 hover:-translate-y-0.5"
-            >
-              Créer un compte — C'est gratuit
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-          </div>
-        </div>
-      </section>
+/* ── FAQ ──────────────────────────────────────────────────────────────── */
+const FAQS = [
+  { q: 'Comment connecter ma première télévision ?', a: 'Ouvrez l’adresse /tv de votre serveur (par exemple http://192.168.1.50:5000/tv) dans le navigateur de la TV. Elle affiche un code à 6 caractères : saisissez-le dans la page « Écrans » de l’administration pour associer l’écran.' },
+  { q: 'Est-ce que ça fonctionne sans Internet ?', a: 'Oui. Dès qu’une playlist est affectée, la TV télécharge les médias et les conserve en cache : la diffusion continue en cas de coupure. Seul le réseau local vers votre serveur est nécessaire pour recevoir les mises à jour.' },
+  { q: 'Quels formats de fichiers sont acceptés ?', a: 'Images JPG, PNG et WEBP, et vidéos MP4, jusqu’à 100 Mo par fichier. Les images sont automatiquement redimensionnées et optimisées à l’import.' },
+  { q: 'Combien d’écrans puis-je connecter ?', a: 'Le logiciel n’impose pas de limite. En pratique, c’est la puissance de votre serveur et de votre réseau qui comptent ; quelques dizaines d’écrans restent confortables sur un petit serveur.' },
+  { q: 'Où sont stockées mes données ?', a: 'Uniquement sur votre serveur : une base SQLite et un dossier pour vos médias. Rien n’est envoyé vers un service tiers.' },
+  { q: 'Puis-je l’utiliser sur un Fire TV Stick ou une Android TV ?', a: 'Oui, le lecteur fonctionne dans le navigateur de la plupart des télévisions connectées, Fire TV Stick et Android TV compris, ainsi que sur un mini-PC en mode kiosque.' },
+];
 
-      {/* ── FOOTER ── */}
-      <footer className="bg-slate-950 border-t border-slate-800/60 py-12 px-6">
-        <div className="max-w-6xl mx-auto">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-10">
-            <div className="col-span-2 md:col-span-1">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-500 to-violet-500 flex items-center justify-center">
-                  <Monitor className="w-3.5 h-3.5 text-white" />
-                </div>
-                <span className="font-bold text-white">ImageScreen</span>
-              </div>
-              <p className="text-xs text-slate-500 leading-relaxed">Solution de diffusion d'affichage dynamique pour commerces et entreprises.</p>
-            </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Produit</p>
-              <ul className="space-y-2 text-xs text-slate-400">
-                <li><a href="#features" className="hover:text-white transition-colors">Fonctionnalités</a></li>
-                <li><a href="#pricing" className="hover:text-white transition-colors">Tarifs</a></li>
-                <li><Link to="/login" className="hover:text-white transition-colors">Connexion</Link></li>
-              </ul>
-            </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Support</p>
-              <ul className="space-y-2 text-xs text-slate-400">
-                <li><a href="#faq" className="hover:text-white transition-colors">FAQ</a></li>
-                <li><a href="mailto:contact@imagescreen.fr" className="hover:text-white transition-colors">Contact</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Documentation</a></li>
-              </ul>
-            </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Légal</p>
-              <ul className="space-y-2 text-xs text-slate-400">
-                <li><a href="#" className="hover:text-white transition-colors">CGU</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Politique de confidentialité</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Mentions légales</a></li>
-              </ul>
-            </div>
-          </div>
-          <div className="border-t border-slate-800/60 pt-6 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-600">
-            <p>© {new Date().getFullYear()} ImageScreen. Tous droits réservés.</p>
-            <p>Fait avec ❤️ pour les commerçants</p>
+function FaqItem({ q, a }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={cn('card overflow-hidden transition-colors', open && 'border-primary/30')}>
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left sm:px-6 sm:py-5">
+        <span className="text-[15px] font-bold">{q}</span>
+        <ChevronDown className={cn('size-5 shrink-0 text-subtle transition-transform duration-300', open && 'rotate-180 text-brand')} />
+      </button>
+      <div className={cn('grid transition-all duration-300', open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]')}>
+        <div className="overflow-hidden"><p className="px-5 pb-5 text-sm leading-relaxed text-muted sm:px-6">{a}</p></div>
+      </div>
+    </div>
+  );
+}
+
+function Faq() {
+  return (
+    <section id="faq" className="mx-auto max-w-3xl scroll-mt-20 px-5 pb-24 sm:px-8 sm:pb-28">
+      <SectionHead eyebrow="FAQ" title="Questions fréquentes" />
+      <div className="space-y-3">
+        {FAQS.map((f, i) => <Reveal key={f.q} delay={i * 50}><FaqItem {...f} /></Reveal>)}
+      </div>
+    </section>
+  );
+}
+
+/* ── CTA + footer ─────────────────────────────────────────────────────── */
+function Cta() {
+  return (
+    <section className="mx-auto max-w-5xl px-5 pb-24 sm:px-8">
+      <Reveal>
+        <div data-theme="dark" className="relative overflow-hidden rounded-4xl bg-[#0a0b14] px-6 py-16 text-center text-fg shadow-pop sm:px-12 sm:py-20">
+          <div className="absolute -left-20 -top-20 size-80 animate-drift rounded-full bg-indigo-600/40 blur-[90px]" aria-hidden="true" />
+          <div className="absolute -bottom-24 -right-16 size-80 animate-drift rounded-full bg-fuchsia-600/35 blur-[90px] [animation-delay:-8s]" aria-hidden="true" />
+          <div className="bg-grid mask-fade-radial absolute inset-0 opacity-50" aria-hidden="true" />
+          <div className="relative">
+            <h2 className="mx-auto max-w-xl font-display text-3xl font-extrabold leading-tight tracking-tight sm:text-4xl">Prêt à lancer vos écrans&nbsp;?</h2>
+            <p className="mx-auto mt-4 max-w-md text-base text-muted">Connectez-vous à votre espace pour importer vos médias et associer votre première télévision.</p>
+            <Button to="/login" variant="primary" size="lg" iconRight={ArrowRight} className="mt-8">Accéder à l’application</Button>
           </div>
         </div>
-      </footer>
+      </Reveal>
+    </section>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="border-t border-line">
+      <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-5 px-5 py-8 text-sm text-subtle sm:flex-row sm:px-8">
+        <div className="flex items-center gap-2.5">
+          <LogoMark className="size-7" />
+          <span className="font-display font-extrabold text-fg">ImageScreen</span>
+          <span className="hidden sm:inline">· Affichage dynamique pour commerces</span>
+        </div>
+        <nav className="flex gap-6 font-medium" aria-label="Pied de page">
+          <a href="#features" className="transition hover:text-fg">Fonctionnalités</a>
+          <a href="#faq" className="transition hover:text-fg">FAQ</a>
+          <Link to="/login" className="transition hover:text-fg">Connexion</Link>
+        </nav>
+        <p>© {new Date().getFullYear()} ImageScreen</p>
+      </div>
+    </footer>
+  );
+}
+
+export default function Home() {
+  useDocumentTitle('');
+  return (
+    <div className="min-h-dvh overflow-x-clip bg-bg">
+      <Navbar />
+      <main>
+        <Hero />
+        <Compat />
+        <Features />
+        <How />
+        <SelfHost />
+        <Faq />
+        <Cta />
+      </main>
+      <Footer />
     </div>
   );
 }

@@ -1,532 +1,714 @@
-import React, { useState, useEffect } from 'react';
-import Layout from '../layouts/Layout';
-import { api, mediaUrl } from '../services/api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
-  PlaySquare,
-  Plus,
-  Trash2,
-  Copy,
-  Edit,
-  ArrowUp,
   ArrowDown,
-  X,
-  PlusCircle,
+  ArrowLeft,
+  ArrowUp,
   Clock,
+  Copy,
+  EllipsisVertical,
+  Film,
+  GripVertical,
+  Images,
+  ListVideo,
+  Minus,
+  Pencil,
+  Plus,
+  Save,
+  Search,
   Shuffle,
-  Repeat
+  Trash2,
+  X,
 } from 'lucide-react';
+import { api } from '../services/api';
+import { useStoreSettings } from '../hooks/useStoreSettings';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import Button from '../components/ui/Button';
+import { Badge } from '../components/ui/Badge';
+import { Card, CardBody, CardHeader } from '../components/ui/Card';
+import { Field, Input } from '../components/ui/Field';
+import Modal from '../components/ui/Modal';
+import { DropdownMenu, MenuItem, MenuSeparator } from '../components/ui/Menu';
+import { EmptyState, PageHeader, Segmented, Skeleton, Switch } from '../components/ui/Misc';
+import { useToast } from '../components/ui/Toast';
+import { useConfirm } from '../components/ui/Confirm';
+import MediaThumb, { playlistCovers } from '../components/MediaThumb';
+import PlaylistPreview from '../components/PlaylistPreview';
+import { cn } from '../utils/cn';
+import { formatDuration, plural } from '../utils/format';
 
-export default function Playlists() {
-  const [playlists, setPlaylists] = useState([]);
-  const [library, setLibrary] = useState([]);
+const TRANSITIONS = [
+  { value: 'fade', label: 'Fondu', hint: 'Apparition douce', cls: 'preview-fade' },
+  { value: 'zoom', label: 'Zoom', hint: 'Léger zoom avant', cls: 'preview-zoom' },
+  { value: 'slide', label: 'Glissement', hint: 'Entrée latérale', cls: 'preview-slide' },
+];
+const TRANSITION_LABEL = Object.fromEntries(TRANSITIONS.map((t) => [t.value, t.label]));
+const DURATION_PRESETS = [5, 8, 10, 15, 30];
+
+let uid = 0;
+const makeEntry = (mediaId) => ({ uid: ++uid, mediaId: String(mediaId) });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   List view
+   ═══════════════════════════════════════════════════════════════════════════ */
+function Mosaic({ medias }) {
+  if (medias.length === 0) {
+    return (
+      <div className="grid h-full w-full place-items-center bg-brand-gradient-soft text-subtle">
+        <ListVideo className="size-10 opacity-60" />
+      </div>
+    );
+  }
+  if (medias.length < 4) {
+    return <MediaThumb media={medias[0]} className="h-full w-full" imgClassName="transition duration-500 group-hover:scale-105" />;
+  }
+  return (
+    <div className="grid h-full w-full grid-cols-2 grid-rows-2 gap-px bg-black/20">
+      {medias.slice(0, 4).map((m) => (
+        <MediaThumb key={m.id} media={m} className="h-full w-full" imgClassName="transition duration-500 group-hover:scale-105" />
+      ))}
+    </div>
+  );
+}
+
+function PlaylistCard({ playlist, library, screensCount, onOpen, onDuplicate, onDelete }) {
+  const covers = playlistCovers(playlist, library, 4);
+  return (
+    <Card className="group relative overflow-hidden transition-shadow hover:shadow-pop">
+      <button
+        type="button"
+        onClick={() => onOpen(playlist)}
+        aria-label={`Modifier la playlist ${playlist.name}`}
+        className="block w-full text-left focus-visible:outline-none"
+      >
+        <div className="relative aspect-video overflow-hidden bg-surface-3">
+          <Mosaic medias={covers} />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
+          <div className="absolute bottom-3 left-3 flex gap-2">
+            <span className="rounded-lg bg-black/55 px-2.5 py-1 text-[11px] font-bold text-white backdrop-blur-md">
+              {playlist.media_count || 0} {plural(playlist.media_count || 0, 'média', 'médias')}
+            </span>
+          </div>
+        </div>
+        <div className="space-y-3 p-4 sm:p-5">
+          <h3 className="truncate pr-8 font-display text-base font-bold tracking-tight">{playlist.name}</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="primary" icon={Clock}>{playlist.duration || 5} s / média</Badge>
+            <Badge tone="neutral">{TRANSITION_LABEL[playlist.transition] || 'Fondu'}</Badge>
+            {playlist.random_order ? <Badge tone="neutral" icon={Shuffle}>Aléatoire</Badge> : null}
+            {screensCount > 0 && (
+              <Badge tone="success" dot pulse>
+                Sur {screensCount} {plural(screensCount, 'écran', 'écrans')}
+              </Badge>
+            )}
+          </div>
+        </div>
+      </button>
+      <div className="absolute right-2.5 top-2.5">
+        <DropdownMenu
+          trigger={(props) => (
+            <button
+              type="button"
+              {...props}
+              aria-label={`Actions pour ${playlist.name}`}
+              className="grid size-9 place-items-center rounded-xl bg-black/55 text-white backdrop-blur-md transition hover:bg-black/70"
+            >
+              <EllipsisVertical className="size-[18px]" />
+            </button>
+          )}
+        >
+          <MenuItem icon={Pencil} onClick={() => onOpen(playlist)}>Modifier</MenuItem>
+          <MenuItem icon={Copy} onClick={() => onDuplicate(playlist)}>Dupliquer</MenuItem>
+          <MenuSeparator />
+          <MenuItem icon={Trash2} tone="danger" onClick={() => onDelete(playlist)}>Supprimer</MenuItem>
+        </DropdownMenu>
+      </div>
+    </Card>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Editor
+   ═══════════════════════════════════════════════════════════════════════════ */
+function TransitionPicker({ value, onChange }) {
+  return (
+    <div role="radiogroup" aria-label="Transition entre les médias" className="grid grid-cols-3 gap-3">
+      {TRANSITIONS.map((t) => {
+        const active = value === t.value;
+        return (
+          <button
+            key={t.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(t.value)}
+            className={cn(
+              'group rounded-2xl border p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30',
+              active ? 'border-primary bg-primary/5 shadow-glow' : 'border-line hover:border-line-strong hover:bg-surface-2'
+            )}
+          >
+            <div className="relative aspect-video overflow-hidden rounded-xl bg-slate-900">
+              <div className="absolute inset-0 bg-gradient-to-br from-slate-700 to-slate-900" />
+              <div className={cn('absolute inset-0 bg-gradient-to-br from-indigo-500 via-violet-500 to-fuchsia-500', t.cls)} />
+            </div>
+            <p className={cn('mt-2.5 text-[13px] font-bold', active && 'text-brand')}>{t.label}</p>
+            <p className="text-[11px] text-subtle">{t.hint}</p>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function DurationStepper({ value, onChange }) {
+  const set = (n) => onChange(Math.max(1, Math.min(3600, Math.round(n) || 1)));
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <button type="button" onClick={() => set(value - 1)} aria-label="Diminuer la durée" className="grid size-10 place-items-center rounded-xl border border-line text-muted transition hover:bg-surface-2 hover:text-fg">
+          <Minus className="size-4" />
+        </button>
+        <div className="relative">
+          <input
+            type="number"
+            min="1"
+            max="3600"
+            value={value}
+            onChange={(e) => set(Number(e.target.value))}
+            aria-label="Durée d’affichage en secondes"
+            className="input w-24 text-center font-display text-lg font-bold tabular-nums"
+          />
+          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-subtle">s</span>
+        </div>
+        <button type="button" onClick={() => set(value + 1)} aria-label="Augmenter la durée" className="grid size-10 place-items-center rounded-xl border border-line text-muted transition hover:bg-surface-2 hover:text-fg">
+          <Plus className="size-4" />
+        </button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {DURATION_PRESETS.map((p) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => set(p)}
+            className={cn(
+              'rounded-lg px-2.5 py-1 text-xs font-bold transition',
+              value === p ? 'bg-primary/10 text-brand' : 'bg-surface-2 text-muted hover:text-fg'
+            )}
+          >
+            {p} s
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SequenceRow({ entry, index, total, media, dragging, over, onMove, onRemove, handlers }) {
+  const isVideo = media?.mime_type?.startsWith('video/');
+  return (
+    <li
+      {...handlers}
+      className={cn(
+        'group flex items-center gap-3 rounded-2xl border bg-surface p-2.5 transition-all',
+        dragging ? 'opacity-40' : 'opacity-100',
+        over ? 'border-primary shadow-glow' : 'border-line hover:border-line-strong'
+      )}
+    >
+      <span className="hidden cursor-grab touch-none text-subtle active:cursor-grabbing sm:block" aria-hidden="true">
+        <GripVertical className="size-5" />
+      </span>
+      <span className="grid size-6 shrink-0 place-items-center rounded-md bg-surface-3 text-[11px] font-bold tabular-nums text-muted">{index + 1}</span>
+      <MediaThumb media={media} className="h-12 w-[72px] shrink-0 rounded-lg" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold" title={media?.original_name}>{media?.original_name || 'Média supprimé'}</p>
+        <p className="mt-0.5 flex items-center gap-1 text-[11px] text-subtle">
+          {isVideo ? <><Film className="size-3" /> Vidéo · durée propre</> : <><Clock className="size-3" /> Durée de la playlist</>}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-0.5">
+        <button type="button" onClick={() => onMove(index, -1)} disabled={index === 0} aria-label="Monter" className="grid size-8 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg disabled:opacity-30">
+          <ArrowUp className="size-4" />
+        </button>
+        <button type="button" onClick={() => onMove(index, 1)} disabled={index === total - 1} aria-label="Descendre" className="grid size-8 place-items-center rounded-lg text-muted transition hover:bg-surface-2 hover:text-fg disabled:opacity-30">
+          <ArrowDown className="size-4" />
+        </button>
+        <button type="button" onClick={() => onRemove(entry.uid)} aria-label="Retirer de la playlist" className="grid size-8 place-items-center rounded-lg text-muted transition hover:bg-danger/10 hover:text-danger">
+          <X className="size-4" />
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function Editor({ playlistId, library, onBack, onChanged }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(null); // snapshot of what is stored on the server
+  const [form, setForm] = useState({ name: '', duration: 5, transition: 'fade', random_order: false, loop_playback: true });
+  const [entries, setEntries] = useState([]);
+  const [filter, setFilter] = useState('all');
+  const [query, setQuery] = useState('');
+  const [dragIndex, setDragIndex] = useState(null);
+  const [overIndex, setOverIndex] = useState(null);
 
-  // Modal / Form state
-  const [activePlaylist, setActivePlaylist] = useState(null); // Playlist being edited
-  const [playlistForm, setPlaylistForm] = useState({
-    name: '',
-    duration: 5,
-    transition: 'fade',
-    random_order: false,
-    loop_playback: true
-  });
-  const [selectedMediaIds, setSelectedMediaIds] = useState([]); // Array of IDs in order
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [formError, setFormError] = useState('');
+  const snapshot = useCallback((f, e) => JSON.stringify({ f, ids: e.map((x) => x.mediaId) }), []);
 
-  const fetchPlaylists = async () => {
-    try {
-      const data = await api.get('/playlists');
-      setPlaylists(data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const fetchLibrary = async () => {
-    try {
-      const data = await api.get('/media');
-      setLibrary(data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  useEffect(() => {
-    async function init() {
-      await Promise.all([fetchPlaylists(), fetchLibrary()]);
-      setLoading(false);
-    }
-    init();
-  }, []);
-
-  const handleCreateOpen = () => {
-    setPlaylistForm({
-      name: '',
-      duration: 5,
-      transition: 'fade',
-      random_order: false,
-      loop_playback: true
-    });
-    setFormError('');
-    setIsCreateOpen(true);
-  };
-
-  const handleCreate = async (e) => {
-    e.preventDefault();
-    setFormError('');
-
-    if (!playlistForm.name.trim()) {
-      setFormError('Le nom de la playlist est obligatoire.');
-      return;
-    }
-
-    try {
-      const newPlaylist = await api.post('/playlists', {
-        ...playlistForm,
-        mediaIds: []
-      });
-      setIsCreateOpen(false);
-      fetchPlaylists();
-      // Open immediately for editing media
-      openEditPanel(newPlaylist);
-    } catch (err) {
-      setFormError(err.message || 'Erreur lors de la création.');
-    }
-  };
-
-  const openEditPanel = async (playlist) => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
-      const details = await api.get(`/playlists/${playlist.id}`);
-      setActivePlaylist(details);
-      setPlaylistForm({
-        name: details.name,
-        duration: details.duration,
-        transition: details.transition,
-        random_order: details.random_order === 1,
-        loop_playback: details.loop_playback === 1
-      });
-      setSelectedMediaIds(details.media.map(m => m.id));
+      const d = await api.get(`/playlists/${playlistId}`);
+      const f = {
+        name: d.name,
+        duration: Number(d.duration) || 5,
+        transition: d.transition || 'fade',
+        random_order: Boolean(d.random_order),
+        loop_playback: Boolean(d.loop_playback),
+      };
+      const e = (d.media || []).map((m) => makeEntry(m.id));
+      setForm(f);
+      setEntries(e);
+      setSaved(snapshot(f, e));
     } catch (err) {
-      alert(err.message || 'Erreur lors de la récupération des détails.');
+      toast.error(err.message || 'Playlist introuvable.');
+      onBack();
     } finally {
       setLoading(false);
     }
+  }, [playlistId, snapshot, toast, onBack]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const dirty = saved !== null && snapshot(form, entries) !== saved;
+
+  // Warn before closing the tab with unsaved work
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [dirty]);
+
+  const byId = useMemo(() => new Map(library.map((m) => [String(m.id), m])), [library]);
+  const sequence = entries.map((e) => byId.get(e.mediaId)).filter(Boolean);
+
+  const totals = useMemo(() => {
+    const images = sequence.filter((m) => !m.mime_type.startsWith('video/')).length;
+    const videos = sequence.length - images;
+    return { images, videos, seconds: images * form.duration };
+  }, [sequence, form.duration]);
+
+  const usage = useMemo(() => {
+    const map = new Map();
+    entries.forEach((e) => map.set(e.mediaId, (map.get(e.mediaId) || 0) + 1));
+    return map;
+  }, [entries]);
+
+  const add = (media) => setEntries((prev) => [...prev, makeEntry(media.id)]);
+  const remove = (u) => setEntries((prev) => prev.filter((e) => e.uid !== u));
+  const move = (i, dir) => setEntries((prev) => {
+    const j = i + dir;
+    if (j < 0 || j >= prev.length) return prev;
+    const copy = [...prev];
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+    return copy;
+  });
+  const reorder = (from, to) => setEntries((prev) => {
+    if (from === null || to === null || from === to) return prev;
+    const copy = [...prev];
+    const [item] = copy.splice(from, 1);
+    copy.splice(to, 0, item);
+    return copy;
+  });
+
+  const save = async () => {
+    if (!form.name.trim()) return toast.error('Donnez un nom à la playlist.');
+    setSaving(true);
+    try {
+      await api.put(`/playlists/${playlistId}`, { ...form, name: form.name.trim(), mediaIds: entries.map((e) => e.mediaId) });
+      const f = { ...form, name: form.name.trim() };
+      setForm(f);
+      setSaved(snapshot(f, entries));
+      onChanged();
+      toast.success('Playlist enregistrée. Les écrans concernés se mettent à jour.');
+    } catch (err) {
+      toast.error(err.message || 'Enregistrement impossible.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleUpdate = async (e) => {
-    if (e) e.preventDefault();
-    if (!activePlaylist) return;
-
-    try {
-      await api.put(`/playlists/${activePlaylist.id}`, {
-        ...playlistForm,
-        mediaIds: selectedMediaIds
+  const goBack = async () => {
+    if (dirty) {
+      const ok = await confirm({
+        tone: 'warning',
+        title: 'Quitter sans enregistrer ?',
+        message: 'Vos modifications de cette playlist seront perdues.',
+        confirmLabel: 'Quitter',
+        cancelLabel: 'Rester',
       });
-      fetchPlaylists();
-      // Reload active to get correct display
-      const updated = await api.get(`/playlists/${activePlaylist.id}`);
-      setActivePlaylist(updated);
-      alert('Playlist enregistrée avec succès !');
-    } catch (err) {
-      alert(err.message || 'Erreur lors de la mise à jour.');
+      if (!ok) return;
     }
+    onBack();
   };
 
-  const handleDelete = async (id, name) => {
-    if (!window.confirm(`Voulez-vous vraiment supprimer la playlist "${name}" ?`)) {
-      return;
-    }
+  const filtered = library.filter((m) => {
+    if (filter === 'image' && m.mime_type.startsWith('video/')) return false;
+    if (filter === 'video' && !m.mime_type.startsWith('video/')) return false;
+    return !query.trim() || m.original_name?.toLowerCase().includes(query.trim().toLowerCase());
+  });
 
-    try {
-      await api.delete(`/playlists/${id}`);
-      fetchPlaylists();
-      if (activePlaylist?.id === id) {
-        setActivePlaylist(null);
-      }
-    } catch (err) {
-      alert(err.message || 'Erreur lors de la suppression.');
-    }
-  };
-
-  const handleDuplicate = async (id) => {
-    try {
-      const copy = await api.post(`/playlists/${id}/duplicate`);
-      fetchPlaylists();
-      openEditPanel(copy);
-    } catch (err) {
-      alert(err.message || 'Erreur lors de la duplication.');
-    }
-  };
-
-  // Media addition / ordering helpers
-  const addMediaToPlaylist = (mediaId) => {
-    setSelectedMediaIds(prev => [...prev, mediaId]);
-  };
-
-  const removeMediaFromPlaylist = (index) => {
-    setSelectedMediaIds(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const moveItem = (index, direction) => {
-    const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= selectedMediaIds.length) return;
-
-    setSelectedMediaIds(prev => {
-      const copy = [...prev];
-      const temp = copy[index];
-      copy[index] = copy[nextIndex];
-      copy[nextIndex] = temp;
-      return copy;
-    });
-  };
-
-  // Get full media detail from library for reordering listing
-  const getMediaDetails = (id) => {
-    return library.find(m => m.id === id);
-  };
+  if (loading) {
+    return (
+      <div className="space-y-5">
+        <Skeleton className="h-16 w-full rounded-2xl" />
+        <div className="grid gap-6 lg:grid-cols-12">
+          <Skeleton className="h-96 rounded-2xl lg:col-span-7" />
+          <Skeleton className="h-96 rounded-2xl lg:col-span-5" />
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <Layout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">Playlists</h1>
-            <p className="text-slate-400 text-sm">Créez et configurez des boucles de diffusion.</p>
-          </div>
-          <button
-            onClick={handleCreateOpen}
-            className="px-4 py-2 bg-brand-500 hover:bg-brand-600 active:scale-[0.98] text-white font-semibold text-xs rounded-lg shadow-lg shadow-brand-500/20 transition-all flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Créer une playlist
-          </button>
+    <div className="space-y-6">
+      {/* Sticky action bar */}
+      <div className="glass sticky top-16 z-20 -mx-4 flex flex-wrap items-center gap-3 border-b border-line px-4 py-3 sm:-mx-6 sm:px-6 lg:top-[72px] lg:-mx-10 lg:px-10">
+        <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={goBack}>Playlists</Button>
+        <div className="min-w-0 flex-1 basis-56">
+          <label htmlFor="playlist-name" className="sr-only">Nom de la playlist</label>
+          <input
+            id="playlist-name"
+            value={form.name}
+            maxLength={100}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            placeholder="Nom de la playlist"
+            className="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 font-display text-xl font-extrabold tracking-tight transition hover:border-line focus:border-primary focus:bg-surface focus:outline-none focus:ring-4 focus:ring-primary/15"
+          />
         </div>
-
-        {/* Core Layout Split */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-          {/* Playlists list: Left 1/3 (or 2/3 if no active) */}
-          <div className={`space-y-4 ${activePlaylist ? 'lg:col-span-1' : 'lg:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-6'}`}>
-            {playlists.length === 0 ? (
-              <div className="glass-card rounded-2xl py-12 text-center text-slate-500 text-sm col-span-3">
-                Aucune playlist. Cliquez sur "Créer une playlist" pour commencer.
-              </div>
-            ) : (
-              playlists.map((pl) => (
-                <div
-                  key={pl.id}
-                  onClick={() => openEditPanel(pl)}
-                  className={`glass-card rounded-2xl p-5 cursor-pointer border hover:border-slate-700 transition-all ${
-                    activePlaylist?.id === pl.id ? 'border-brand-500/80 bg-brand-500/5' : 'border-slate-850'
-                  }`}
-                >
-                  <div className="flex justify-between items-start gap-4">
-                    <div className="min-w-0">
-                      <h3 className="font-semibold text-slate-200 truncate">{pl.name}</h3>
-                      <p className="text-xs text-slate-500 font-medium mt-1">
-                        {pl.media_count} médias — {pl.duration}s par défaut
-                      </p>
-                      <span className="inline-block mt-3 text-[10px] uppercase font-bold tracking-wider text-brand-400 bg-brand-500/10 px-2 py-0.5 rounded">
-                        Transition : {pl.transition}
-                      </span>
-                    </div>
-
-                    <div className="flex gap-1 shrink-0">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDuplicate(pl.id);
-                        }}
-                        className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300"
-                        title="Dupliquer"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(pl.id, pl.name);
-                        }}
-                        className="p-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 text-rose-400"
-                        title="Supprimer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* Edit Panel: Right 2/3 (only visible if activePlaylist selected) */}
-          {activePlaylist && (
-            <div className="lg:col-span-2 glass-card rounded-2xl p-6 border border-slate-800 space-y-6">
-              {/* Panel Header */}
-              <div className="flex justify-between items-center pb-4 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <PlaySquare className="w-5 h-5 text-brand-500" />
-                  <h2 className="text-base font-semibold text-white truncate max-w-[200px]">
-                    Modifier : {playlistForm.name}
-                  </h2>
-                </div>
-                <button
-                  onClick={() => setActivePlaylist(null)}
-                  className="text-slate-400 hover:text-white"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Playlist Form Parameters */}
-              <form onSubmit={handleUpdate} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">
-                    Nom de la playlist
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={playlistForm.name}
-                    onChange={(e) => setPlaylistForm({ ...playlistForm, name: e.target.value })}
-                    className="w-full px-3 py-2 text-xs rounded-lg glass-input"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1">
-                    Transition par défaut
-                  </label>
-                  <select
-                    value={playlistForm.transition}
-                    onChange={(e) => setPlaylistForm({ ...playlistForm, transition: e.target.value })}
-                    className="w-full px-3 py-2 text-xs rounded-lg glass-input"
-                  >
-                    <option value="fade">Fondu (Fade)</option>
-                    <option value="zoom">Zoom</option>
-                    <option value="slide">Slide (Glissement)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1 flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5" />
-                    Durée d'affichage par défaut (secondes)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={playlistForm.duration}
-                    onChange={(e) => setPlaylistForm({ ...playlistForm, duration: parseInt(e.target.value) })}
-                    className="w-full px-3 py-2 text-xs rounded-lg glass-input"
-                  />
-                </div>
-
-                {/* Option Toggles */}
-                <div className="flex gap-6 items-center pt-5">
-                  <label className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={playlistForm.random_order}
-                      onChange={(e) => setPlaylistForm({ ...playlistForm, random_order: e.target.checked })}
-                      className="rounded bg-dark-900 border-slate-700 text-brand-500 focus:ring-0 focus:ring-offset-0 w-4 h-4"
-                    />
-                    <Shuffle className="w-3.5 h-3.5 text-slate-400" />
-                    Ordre aléatoire
-                  </label>
-
-                  <label className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-slate-300">
-                    <input
-                      type="checkbox"
-                      checked={playlistForm.loop_playback}
-                      onChange={(e) => setPlaylistForm({ ...playlistForm, loop_playback: e.target.checked })}
-                      className="rounded bg-dark-900 border-slate-700 text-brand-500 focus:ring-0 focus:ring-offset-0 w-4 h-4"
-                    />
-                    <Repeat className="w-3.5 h-3.5 text-slate-400" />
-                    Lecture en boucle
-                  </label>
-                </div>
-              </form>
-
-              {/* Media Assignment Area */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-slate-800">
-                {/* 1. Playlist Content (Reordering) */}
-                <div className="space-y-3">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Contenu de la Playlist ({selectedMediaIds.length})
-                  </h3>
-
-                  <div className="border border-slate-800 bg-dark-950/60 rounded-xl p-3 space-y-2 max-h-[350px] overflow-y-auto min-h-[150px]">
-                    {selectedMediaIds.length === 0 ? (
-                      <div className="py-12 text-center text-slate-500 text-xs">
-                        Aucun média dans cette playlist. Ajoutez-en depuis la bibliothèque à droite.
-                      </div>
-                    ) : (
-                      selectedMediaIds.map((id, index) => {
-                        const m = getMediaDetails(id);
-                        if (!m) return null;
-                        return (
-                          <div
-                            key={`${id}-${index}`}
-                            className="flex items-center justify-between gap-3 p-2 bg-slate-900/60 border border-slate-850 rounded-lg"
-                          >
-                            <div className="flex items-center gap-2 min-w-0">
-                              <img
-                                src={mediaUrl(m.filepath)}
-                                alt=""
-                                className="w-8 h-8 object-cover rounded shrink-0 bg-black"
-                              />
-                              <span className="text-xs font-semibold text-slate-200 truncate max-w-[100px]">
-                                {m.original_name}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center gap-1 shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => moveItem(index, -1)}
-                                disabled={index === 0}
-                                className="p-1 rounded bg-slate-800 hover:bg-slate-750 text-slate-400 disabled:opacity-30"
-                              >
-                                <ArrowUp className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => moveItem(index, 1)}
-                                disabled={index === selectedMediaIds.length - 1}
-                                className="p-1 rounded bg-slate-800 hover:bg-slate-750 text-slate-400 disabled:opacity-30"
-                              >
-                                <ArrowDown className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => removeMediaFromPlaylist(index)}
-                                className="p-1 rounded bg-rose-950/40 hover:bg-rose-900/40 text-rose-400 ml-1"
-                              >
-                                <X className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-
-                {/* 2. Media Library Picker */}
-                <div className="space-y-3">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Médiathèque (Cliquez pour ajouter)
-                  </h3>
-
-                  <div className="border border-slate-800 bg-dark-950/60 rounded-xl p-3 space-y-2 max-h-[350px] overflow-y-auto">
-                    {library.length === 0 ? (
-                      <div className="py-12 text-center text-slate-500 text-xs">
-                        La bibliothèque est vide. Chargez des fichiers dans l'onglet Médiathèque.
-                      </div>
-                    ) : (
-                      library.map((m) => (
-                        <div
-                          key={m.id}
-                          onClick={() => addMediaToPlaylist(m.id)}
-                          className="flex items-center justify-between gap-3 p-2 bg-slate-900/30 hover:bg-slate-900/80 border border-slate-850 hover:border-slate-755 rounded-lg cursor-pointer transition-all"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <img
-                              src={mediaUrl(m.filepath)}
-                              alt=""
-                              className="w-8 h-8 object-cover rounded shrink-0 bg-black"
-                            />
-                            <span className="text-xs font-semibold text-slate-300 truncate">
-                              {m.original_name}
-                            </span>
-                          </div>
-                          <PlusCircle className="w-4 h-4 text-brand-500 shrink-0" />
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => openEditPanel(activePlaylist)}
-                  className="px-4 py-2 border border-slate-800 hover:bg-slate-850 rounded-lg text-xs font-semibold text-slate-400"
-                >
-                  Réinitialiser
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleUpdate()}
-                  className="px-4 py-2 bg-brand-500 hover:bg-brand-600 rounded-lg text-xs font-semibold text-white shadow-lg shadow-brand-500/20 active:scale-[0.98] transition-all"
-                >
-                  Enregistrer les modifications
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Create Playlist Modal */}
-        {isCreateOpen && (
-          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-dark-900 border border-slate-800 w-full max-w-md rounded-2xl p-6 relative">
-              <button
-                onClick={() => setIsCreateOpen(false)}
-                className="absolute top-4 right-4 text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-
-              <h3 className="text-base font-semibold text-white mb-4">Créer une playlist</h3>
-
-              {formError && (
-                <div className="mb-4 text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 p-2.5 rounded-lg">
-                  {formError}
-                </div>
-              )}
-
-              <form onSubmit={handleCreate} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1.5">
-                    Nom de la playlist
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={playlistForm.name}
-                    onChange={(e) => setPlaylistForm({ ...playlistForm, name: e.target.value })}
-                    className="w-full px-3 py-2 text-xs rounded-lg glass-input"
-                    placeholder="Ex: Diapos Hall d'entrée"
-                  />
-                </div>
-
-                <div className="flex justify-end gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsCreateOpen(false)}
-                    className="px-4 py-2 border border-slate-800 hover:bg-slate-855 rounded-lg text-xs font-semibold text-slate-400"
-                  >
-                    Annuler
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-4 py-2 bg-brand-500 hover:bg-brand-600 rounded-lg text-xs font-semibold text-white"
-                  >
-                    Créer
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
+        {dirty && <Badge tone="warning" dot>Non enregistré</Badge>}
+        <Button variant="primary" icon={Save} loading={saving} disabled={!dirty} onClick={save}>Enregistrer</Button>
       </div>
-    </Layout>
+
+      <div className="grid gap-6 lg:grid-cols-12">
+        {/* Left: settings + sequence */}
+        <div className="space-y-6 lg:col-span-7">
+          <Card>
+            <CardHeader icon={Clock} title="Diffusion" description="Réglages appliqués sur tous les écrans qui utilisent cette playlist" />
+            <CardBody className="space-y-6">
+              <div>
+                <p className="label">Transition</p>
+                <TransitionPicker value={form.transition} onChange={(transition) => setForm({ ...form, transition })} />
+              </div>
+              <div className="grid gap-6 sm:grid-cols-2">
+                <div>
+                  <p className="label">Durée d’affichage des images</p>
+                  <DurationStepper value={form.duration} onChange={(duration) => setForm({ ...form, duration })} />
+                </div>
+                <div className="space-y-4 sm:pt-6">
+                  <Switch
+                    label="Ordre aléatoire"
+                    description="Mélange les médias à chaque tour"
+                    checked={form.random_order}
+                    onChange={(random_order) => setForm({ ...form, random_order })}
+                  />
+                  <Switch
+                    label="Lecture en boucle"
+                    description="Recommence à la fin de la liste"
+                    checked={form.loop_playback}
+                    onChange={(loop_playback) => setForm({ ...form, loop_playback })}
+                  />
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader
+              icon={ListVideo}
+              tone="accent"
+              title={`Séquence (${entries.length})`}
+              description={
+                entries.length === 0
+                  ? 'Ajoutez des médias depuis la médiathèque'
+                  : `${formatDuration(totals.seconds)}${totals.videos ? ` + ${totals.videos} ${plural(totals.videos, 'vidéo', 'vidéos')}` : ''} par tour`
+              }
+              action={entries.length > 0 && <Button size="xs" variant="ghost" icon={Trash2} onClick={() => setEntries([])}>Vider</Button>}
+            />
+            <CardBody className="pt-4">
+              {entries.length === 0 ? (
+                <div className="rounded-2xl border-2 border-dashed border-line px-6 py-10 text-center">
+                  <Images className="mx-auto mb-3 size-8 text-subtle" />
+                  <p className="text-sm font-semibold">Votre playlist est vide</p>
+                  <p className="mt-1 text-[13px] text-muted">Cliquez sur un média de la médiathèque pour l’ajouter ici.</p>
+                </div>
+              ) : (
+                <ol className="space-y-2" onDragLeave={() => setOverIndex(null)}>
+                  {entries.map((entry, i) => (
+                    <SequenceRow
+                      key={entry.uid}
+                      entry={entry}
+                      index={i}
+                      total={entries.length}
+                      media={byId.get(entry.mediaId)}
+                      dragging={dragIndex === i}
+                      over={overIndex === i && dragIndex !== null && dragIndex !== i}
+                      onMove={move}
+                      onRemove={remove}
+                      handlers={{
+                        draggable: true,
+                        onDragStart: (e) => { setDragIndex(i); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(i)); },
+                        onDragOver: (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setOverIndex(i); },
+                        onDrop: (e) => { e.preventDefault(); reorder(dragIndex, i); setDragIndex(null); setOverIndex(null); },
+                        onDragEnd: () => { setDragIndex(null); setOverIndex(null); },
+                      }}
+                    />
+                  ))}
+                </ol>
+              )}
+            </CardBody>
+          </Card>
+        </div>
+
+        {/* Right: preview + library */}
+        <div className="space-y-6 lg:col-span-5">
+          <Card className="overflow-hidden">
+            <CardHeader title="Aperçu" description="Rendu identique à celui de la TV" />
+            <CardBody className="pt-4">
+              <PlaylistPreview items={sequence} duration={form.duration} transition={form.transition} />
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader icon={Images} tone="info" title="Médiathèque" description="Cliquez sur un média pour l’ajouter" />
+            <CardBody className="space-y-4 pt-4">
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <Input icon={Search} type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Rechercher…" aria-label="Rechercher dans la médiathèque" wrapperClassName="flex-1" />
+                <Segmented
+                  size="sm"
+                  label="Type de média"
+                  value={filter}
+                  onChange={setFilter}
+                  options={[{ value: 'all', label: 'Tout' }, { value: 'image', label: 'Images' }, { value: 'video', label: 'Vidéos' }]}
+                />
+              </div>
+              {library.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted">La médiathèque est vide. Importez des fichiers depuis la page Médiathèque.</p>
+              ) : filtered.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted">Aucun média ne correspond.</p>
+              ) : (
+                <ul className="grid max-h-[420px] grid-cols-3 gap-2.5 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4">
+                  {filtered.map((m) => (
+                    <li key={m.id}>
+                      <button
+                        type="button"
+                        onClick={() => add(m)}
+                        title={`Ajouter « ${m.original_name} »`}
+                        className="group relative block aspect-square w-full overflow-hidden rounded-xl border border-line transition hover:border-primary hover:shadow-glow focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30"
+                      >
+                        <MediaThumb media={m} className="h-full w-full" imgClassName="transition duration-300 group-hover:scale-110" />
+                        <span className="absolute inset-0 grid place-items-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                          <span className="grid size-9 place-items-center rounded-full bg-brand-gradient text-white shadow-btn"><Plus className="size-5" /></span>
+                        </span>
+                        {usage.get(String(m.id)) > 0 && (
+                          <span className="absolute right-1.5 top-1.5 grid min-w-5 place-items-center rounded-full bg-brand-gradient px-1.5 text-[10px] font-bold leading-5 text-white shadow">
+                            ×{usage.get(String(m.id))}
+                          </span>
+                        )}
+                        {m.mime_type.startsWith('video/') && (
+                          <span className="absolute bottom-1.5 left-1.5 grid size-5 place-items-center rounded-md bg-black/60 text-white"><Film className="size-3" /></span>
+                        )}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardBody>
+          </Card>
+        </div>
+      </div>
+    </div>
   );
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Page
+   ═══════════════════════════════════════════════════════════════════════════ */
+export default function Playlists() {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const store = useStoreSettings();
+  const [params, setParams] = useSearchParams();
+  const editId = params.get('p');
+  useDocumentTitle(editId ? 'Éditer une playlist' : 'Playlists');
+
+  const [playlists, setPlaylists] = useState([]);
+  const [library, setLibrary] = useState([]);
+  const [screens, setScreens] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState('');
+  const nameInput = useRef(null);
+
+  const refreshPlaylists = useCallback(async () => {
+    try { setPlaylists(await api.get('/playlists')); } catch (err) { console.error(err); }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [p, m, s] = await Promise.all([api.get('/playlists'), api.get('/media'), api.get('/screens')]);
+        setPlaylists(p); setLibrary(m); setScreens(s);
+      } catch (err) {
+        toast.error(err.message || 'Impossible de charger les playlists.');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [toast]);
+
+  const open = useCallback((pl) => setParams({ p: String(pl.id) }), [setParams]);
+  const closeEditor = useCallback(() => setParams({}), [setParams]);
+
+  const screensFor = (pl) => screens.filter((s) => String(s.playlist_id) === String(pl.id)).length;
+
+  const create = async (e) => {
+    e.preventDefault();
+    setFormError('');
+    if (!newName.trim()) return setFormError('Le nom de la playlist est obligatoire.');
+    setBusy(true);
+    try {
+      const created = await api.post('/playlists', {
+        name: newName.trim(),
+        duration: Number(store.default_duration) || 5,
+        transition: 'fade',
+        random_order: false,
+        loop_playback: true,
+        mediaIds: [],
+      });
+      setCreating(false);
+      setNewName('');
+      await refreshPlaylists();
+      open(created);
+      toast.success('Playlist créée : ajoutez maintenant vos médias.');
+    } catch (err) {
+      setFormError(err.message || 'Création impossible.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const duplicate = async (pl) => {
+    try {
+      const copy = await api.post(`/playlists/${pl.id}/duplicate`);
+      await refreshPlaylists();
+      toast.success(`« ${copy.name || 'Copie'} » créée.`);
+      open(copy);
+    } catch (err) {
+      toast.error(err.message || 'Duplication impossible.');
+    }
+  };
+
+  const remove = async (pl) => {
+    const n = screensFor(pl);
+    const ok = await confirm({
+      tone: 'danger',
+      title: `Supprimer « ${pl.name} » ?`,
+      message: n > 0
+        ? `Cette playlist est diffusée sur ${n} ${plural(n, 'écran', 'écrans')} : ${plural(n, 'il s’arrêtera', 'ils s’arrêteront')} de diffuser. Vos médias ne sont pas supprimés.`
+        : 'Vos médias ne sont pas supprimés, seule la liste l’est.',
+      confirmLabel: 'Supprimer',
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/playlists/${pl.id}`);
+      toast.success('Playlist supprimée.');
+      refreshPlaylists();
+      api.get('/screens').then(setScreens).catch(() => {});
+    } catch (err) {
+      toast.error(err.message || 'Suppression impossible.');
+    }
+  };
+
+  if (editId) {
+    return <Editor key={editId} playlistId={editId} library={library} onBack={closeEditor} onChanged={refreshPlaylists} />;
+  }
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Playlists"
+        description="Composez des boucles de diffusion : choisissez les médias, leur ordre, la durée et la transition."
+        actions={<Button variant="primary" icon={Plus} onClick={() => { setFormError(''); setCreating(true); }}>Nouvelle playlist</Button>}
+      />
+
+      {loading ? (
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-[300px] rounded-2xl" />)}
+        </div>
+      ) : playlists.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={ListVideo}
+            title="Créez votre première playlist"
+            description="Une playlist est une boucle de photos et de vidéos que vos écrans diffusent en continu."
+            action={<Button variant="primary" icon={Plus} onClick={() => setCreating(true)}>Nouvelle playlist</Button>}
+          />
+        </Card>
+      ) : (
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          {playlists.map((pl) => (
+            <PlaylistCard
+              key={pl.id}
+              playlist={pl}
+              library={library}
+              screensCount={screensFor(pl)}
+              onOpen={open}
+              onDuplicate={duplicate}
+              onDelete={remove}
+            />
+          ))}
+          <button
+            type="button"
+            onClick={() => { setFormError(''); setCreating(true); }}
+            className="group grid min-h-[200px] place-items-center rounded-2xl border-2 border-dashed border-line text-muted transition hover:border-primary/50 hover:bg-primary/5 hover:text-brand"
+          >
+            <span className="flex flex-col items-center gap-2 text-sm font-semibold">
+              <span className="grid size-12 place-items-center rounded-2xl bg-surface-2 transition group-hover:bg-primary/10"><Plus className="size-6" /></span>
+              Nouvelle playlist
+            </span>
+          </button>
+        </div>
+      )}
+
+      {creating && (
+        <Modal
+          open
+          onClose={() => setCreating(false)}
+          icon={ListVideo}
+          title="Nouvelle playlist"
+          description="Donnez-lui un nom, vous ajouterez les médias juste après."
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setCreating(false)}>Annuler</Button>
+              <Button variant="primary" type="submit" form="create-playlist" loading={busy}>Créer</Button>
+            </>
+          }
+        >
+          <form id="create-playlist" onSubmit={create}>
+            <Field label="Nom de la playlist" error={formError}>
+              {(p) => (
+                <Input {...p} ref={nameInput} data-autofocus value={newName} onChange={(e) => setNewName(e.target.value)} maxLength={100} placeholder="Ex. Promotions de la semaine" />
+              )}
+            </Field>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+}
+

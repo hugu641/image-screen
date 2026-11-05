@@ -51,6 +51,7 @@ router.put('/auth/update-password', loginLimiter, authController.authMiddleware,
 // Media Library Routes
 // Upload route uses its own Multer multipart parser inside the controller
 router.post('/media/upload', uploadLimiter, authController.authMiddleware, mediaController.uploadMedia);
+router.get('/media/usage', authController.authMiddleware, mediaController.mediaUsage);
 router.get('/media', authController.authMiddleware, mediaController.listMedia);
 router.put('/media/:id/rename', authController.authMiddleware, mediaController.renameMedia);
 router.delete('/media/:id', authController.authMiddleware, mediaController.deleteMedia);

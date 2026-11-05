@@ -203,6 +203,22 @@ function init(server, allowedOrigins = null) {
         }
 
         broadcastScreenListUpdate();
+
+        // Tell the screen its authoritative state, so it resumes after a reboot / reconnection
+        // (or goes back to showing its pairing code if it was dissociated in the meantime).
+        const current = await fdb.getById('screens', id);
+        if (current && current.is_associated) {
+          // Lazy require: playlistController itself requires this module
+          const { getPlaylistDetails } = require('../controllers/playlistController');
+          const playlistDetails = current.playlist_id ? await getPlaylistDetails(current.playlist_id) : null;
+          socket.emit('screen:associated', {
+            name: current.name,
+            playlistId: current.playlist_id || null,
+            playlistDetails,
+          });
+        } else {
+          socket.emit('screen:associated', { name: null, playlistId: null, playlistDetails: null });
+        }
       } catch (err) {
         console.error('Error in screen:register:', err);
       }

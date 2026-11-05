@@ -110,6 +110,18 @@ async function uploadMedia(req, res) {
   });
 }
 
+// Storage used vs. the configured quota (MAX_STORAGE_MB), for the usage gauge in the UI
+async function mediaUsage(req, res) {
+  try {
+    const used = await fdb.sumMediaSize();
+    const max = (Number(process.env.MAX_STORAGE_MB) || 20480) * 1024 * 1024;
+    res.json({ used, max });
+  } catch (error) {
+    console.error('Media usage error:', error);
+    res.status(500).json({ error: "Impossible de calculer l'espace utilisé." });
+  }
+}
+
 async function listMedia(req, res) {
   const { search, sort } = req.query;
 
@@ -196,6 +208,7 @@ async function renameMedia(req, res) {
 }
 
 module.exports = {
+  mediaUsage,
   uploadMedia,
   listMedia,
   deleteMedia,

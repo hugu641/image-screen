@@ -71,6 +71,14 @@ test('error handling, caching and file permissions', async (t) => {
     }
   });
 
+  await t.test('media usage endpoint reports used and max bytes', async () => {
+    const r = await api(srv.base, 'GET', '/media/usage', null, token);
+    assert.equal(r.status, 200);
+    assert.equal(r.data.used, 0);
+    assert.ok(r.data.max > 0);
+    assert.equal((await api(srv.base, 'GET', '/media/usage')).status, 401);
+  });
+
   await t.test('events limit is clamped', async () => {
     const r = await api(srv.base, 'GET', '/events?limit=999999999', null, token);
     assert.equal(r.status, 200);

@@ -114,6 +114,39 @@ test('security', async (t) => {
     admin.socket.close();
   });
 
+  await t.test('a rebooted screen is told it is still associated (and gets its playlist)', async () => {
+    const id = 'scr-' + crypto.randomBytes(8).toString('hex');
+    const secret = crypto.randomBytes(24).toString('hex');
+    const pl = await api(base, 'POST', '/playlists', { name: 'Boot playlist', mediaIds: [] }, adminToken);
+
+    const first = await connect(base, { type: 'screen', screenId: id }, { screenToken: secret });
+    first.socket.emit('screen:register', { code: 'BOOT22', name: 'TV' });
+    await new Promise((r) => setTimeout(r, 400));
+    const assoc = await api(base, 'POST', '/screens/associate', { code: 'BOOT22', name: 'TV Hall', playlistId: pl.data.id }, adminToken);
+    assert.equal(assoc.status, 200);
+    first.socket.close();
+    await new Promise((r) => setTimeout(r, 300));
+
+    // reboot: same id + secret
+    const again = await connect(base, { type: 'screen', screenId: id }, { screenToken: secret });
+    const got = new Promise((resolve) => again.socket.once('screen:associated', resolve));
+    again.socket.emit('screen:register', { code: 'BOOT22', name: 'Écran Kiosque' });
+    const payload = await Promise.race([got, new Promise((r) => setTimeout(() => r(null), 2000))]);
+    assert.ok(payload, 'screen:associated must be sent after register');
+    assert.equal(payload.name, 'TV Hall');
+    assert.equal(String(payload.playlistId), String(pl.data.id));
+    assert.ok(payload.playlistDetails, 'playlist details included');
+
+    // dissociated while offline: the screen is told to go back to pairing
+    const list = await api(base, 'GET', '/screens', null, adminToken);
+    await api(base, 'DELETE', `/screens/${list.data.find((s) => s.id === id).id}`, null, adminToken);
+    const gotReset = new Promise((resolve) => again.socket.once('screen:associated', resolve));
+    again.socket.emit('screen:register', { code: 'BOOT22', name: 'Écran Kiosque' });
+    const reset = await Promise.race([gotReset, new Promise((r) => setTimeout(() => r(null), 2000))]);
+    assert.ok(reset && reset.name === null, 'dissociated screen receives name=null');
+    again.socket.close();
+  });
+
   await t.test('upload: content is checked, disguised HTML is refused', async () => {
     const fd = new FormData();
     fd.append('files', new Blob(['<script>alert(1)</script>'.padEnd(64, ' ')], { type: 'image/png' }), 'evil.html');

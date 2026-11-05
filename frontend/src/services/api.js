@@ -31,24 +31,29 @@ function getHeaders(isMultipart = false) {
 
 // ─── Global fetch wrapper ────────────────────────────────────────────────────
 
+function handleUnauthorized() {
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  const path = window.location.protocol === 'file:'
+    ? window.location.hash.replace(/^#/, '') || '/'
+    : window.location.pathname;
+  if (!path.startsWith('/tv') && !path.startsWith('/setup') && path !== '/login' && path !== '/') {
+    goTo('/login');
+  }
+}
+
 async function request(url, options = {}) {
   const response = await fetch(url, options);
 
-  if (response.status === 401) {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    const path = window.location.protocol === 'file:'
-      ? window.location.hash.replace(/^#/, '') || '/'
-      : window.location.pathname;
-    if (!path.startsWith('/tv') && !path.startsWith('/setup') && path !== '/login') {
-      goTo('/login');
-    }
-  }
+  if (response.status === 401) handleUnauthorized();
 
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.error || 'Une erreur est survenue.');
+    const error = new Error(data.error || 'Une erreur est survenue.');
+    error.status = response.status;
+    error.code = data.code;
+    throw error;
   }
 
   return data;
@@ -100,6 +105,31 @@ export const api = {
       method: 'POST',
       headers: getHeaders(true),
       body: formData
+    });
+  },
+
+  /** Multipart upload with progress (0..1) reporting; fetch() cannot report upload progress. */
+  uploadWithProgress(endpoint, formData, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${getApiUrl()}${endpoint}`);
+      const token = localStorage.getItem('token');
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress?.(e.loaded / e.total);
+      };
+      xhr.onload = () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch { /* non-JSON body */ }
+        if (xhr.status === 401) handleUnauthorized();
+        if (xhr.status >= 200 && xhr.status < 300) return resolve(data);
+        const error = new Error(data.error || 'Une erreur est survenue.');
+        error.status = xhr.status;
+        reject(error);
+      };
+      xhr.onerror = () => reject(new Error('Le serveur est injoignable. Vérifiez votre connexion.'));
+      xhr.onabort = () => reject(new Error('Téléversement annulé.'));
+      xhr.send(formData);
     });
   }
 };

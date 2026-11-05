@@ -1,390 +1,301 @@
-import React, { useState, useEffect, useRef } from 'react';
-import Layout from '../layouts/Layout';
+import { useEffect, useRef, useState } from 'react';
+import { Check, Clock, KeyRound, Lock, Palette, Server, ShieldAlert, Store, Tv, Upload } from 'lucide-react';
 import { api, mediaUrl } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
-import { getServerUrl, isNativeApp, clearServerUrl } from '../services/serverConfig';
-import {
-  Settings as SettingsIcon,
-  Store,
-  Lock,
-  Upload,
-  Clock,
-  CheckCircle,
-  Eye,
-  EyeOff
-} from 'lucide-react';
+import { setStoreSettings, useStoreSettings } from '../hooks/useStoreSettings';
+import { useTheme } from '../hooks/useTheme';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { clearServerUrl, getServerUrl, isNativeApp } from '../services/serverConfig';
+import Button from '../components/ui/Button';
+import { Card, CardBody, CardHeader } from '../components/ui/Card';
+import { Field, Input, PasswordInput, PasswordMeter } from '../components/ui/Field';
+import { PageHeader } from '../components/ui/Misc';
+import { useToast } from '../components/ui/Toast';
+import { useConfirm } from '../components/ui/Confirm';
+import TvAddress from '../components/TvAddress';
+import { cn } from '../utils/cn';
+
+function ThemeCard({ value, label, active, onSelect, preview }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      onClick={() => onSelect(value)}
+      className={cn(
+        'group rounded-2xl border p-2 text-left transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30',
+        active ? 'border-primary bg-primary/5 shadow-glow' : 'border-line hover:border-line-strong'
+      )}
+    >
+      <div className="relative aspect-[4/3] overflow-hidden rounded-xl border border-black/10">{preview}</div>
+      <div className="mt-2.5 flex items-center justify-between px-1">
+        <span className="text-[13px] font-bold">{label}</span>
+        {active && <Check className="size-4 text-brand" strokeWidth={3} />}
+      </div>
+    </button>
+  );
+}
+
+function MiniUi({ bg, card, line, text, accent = '#6a5cf6' }) {
+  return (
+    <div className="flex h-full w-full" style={{ background: bg }}>
+      <div className="w-1/4 space-y-1.5 p-2" style={{ background: card, borderRight: `1px solid ${line}` }}>
+        <div className="h-1.5 w-3/4 rounded-full" style={{ background: accent }} />
+        <div className="h-1.5 w-full rounded-full" style={{ background: line }} />
+        <div className="h-1.5 w-2/3 rounded-full" style={{ background: line }} />
+      </div>
+      <div className="flex-1 space-y-2 p-2.5">
+        <div className="h-2 w-1/2 rounded-full" style={{ background: text }} />
+        <div className="grid grid-cols-2 gap-1.5">
+          <div className="h-7 rounded-md" style={{ background: card, border: `1px solid ${line}` }} />
+          <div className="h-7 rounded-md" style={{ background: card, border: `1px solid ${line}` }} />
+        </div>
+        <div className="h-9 rounded-md" style={{ background: card, border: `1px solid ${line}` }} />
+      </div>
+    </div>
+  );
+}
+
+const LIGHT = { bg: '#f6f7fb', card: '#ffffff', line: '#e2e5f0', text: '#1b2036' };
+const DARK = { bg: '#08090e', card: '#0f111a', line: '#23273a', text: '#eef0f7' };
 
 export default function Settings() {
+  useDocumentTitle('Paramètres');
+  const toast = useToast();
+  const confirm = useConfirm();
   const { changePassword, mustChangePassword, isAdmin } = useAuth();
-  
-  // Settings Form state
+  const { theme, setTheme } = useTheme();
+  const store = useStoreSettings();
+
   const [storeName, setStoreName] = useState('');
   const [defaultDuration, setDefaultDuration] = useState(5);
   const [logo, setLogo] = useState('');
-  const [logoUploading, setLogoUploading] = useState(false);
-  
-  // Password Form state
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  
-  const [showCurrent, setShowCurrent] = useState(false);
-  const [showNew, setShowNew] = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [savingStore, setSavingStore] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+  const logoInput = useRef(null);
 
-  // Status flags
-  const [settingsStatus, setSettingsStatus] = useState({ error: '', success: '', loading: false });
-  const [passwordStatus, setPasswordStatus] = useState({ error: '', success: '', loading: false });
+  const [pw, setPw] = useState({ current: '', next: '', confirm: '' });
+  const [pwError, setPwError] = useState('');
+  const [pwBusy, setPwBusy] = useState(false);
 
-  const logoInputRef = useRef(null);
-
+  // Fill the form once the shared settings have loaded
   useEffect(() => {
-    async function loadSettings() {
-      try {
-        const settings = await api.get('/settings');
-        setStoreName(settings.store_name || 'Mon Magasin');
-        setDefaultDuration(parseInt(settings.default_duration) || 5);
-        setLogo(settings.logo || '');
-      } catch (err) {
-        console.error('Failed to load settings:', err);
-      }
+    if (store.loaded && !hydrated) {
+      setStoreName(store.store_name || '');
+      setDefaultDuration(parseInt(store.default_duration, 10) || 5);
+      setLogo(store.logo || '');
+      setHydrated(true);
     }
-    loadSettings();
-  }, []);
+  }, [store, hydrated]);
 
-  const handleSettingsSubmit = async (e) => {
+  const saveStore = async (e) => {
     e.preventDefault();
-    setSettingsStatus({ error: '', success: '', loading: true });
-
+    if (!storeName.trim()) return toast.error('Le nom du magasin est obligatoire.');
+    setSavingStore(true);
     try {
-      await api.put('/settings', {
-        store_name: storeName,
-        default_duration: defaultDuration,
-        logo
-      });
-      setSettingsStatus({ error: '', success: 'Paramètres enregistrés avec succès.', loading: false });
-      
-      // Auto-reload window to update sidebar immediately after 1s
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+      await api.put('/settings', { store_name: storeName.trim(), default_duration: defaultDuration, logo });
+      setStoreSettings({ store_name: storeName.trim(), default_duration: String(defaultDuration), logo });
+      toast.success('Paramètres du magasin enregistrés.');
     } catch (err) {
-      setSettingsStatus({ error: err.message || 'Erreur lors de la mise à jour.', success: '', loading: false });
-    }
-  };
-
-  const handlePasswordSubmit = async (e) => {
-    e.preventDefault();
-    setPasswordStatus({ error: '', success: '', loading: true });
-
-    if (newPassword !== confirmPassword) {
-      setPasswordStatus({ error: 'Les nouveaux mots de passe ne correspondent pas.', success: '', loading: false });
-      return;
-    }
-    if (newPassword.length < 8) {
-      setPasswordStatus({ error: 'Le nouveau mot de passe doit contenir au moins 8 caractères.', success: '', loading: false });
-      return;
-    }
-
-    try {
-      await changePassword(currentPassword, newPassword);
-      setPasswordStatus({ error: '', success: 'Mot de passe mis à jour avec succès.', loading: false });
-      // Reset fields
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-    } catch (err) {
-      setPasswordStatus({ error: err.message || 'Erreur lors du changement de mot de passe.', success: '', loading: false });
-    }
-  };
-
-  const handleLogoUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setLogoUploading(true);
-    setSettingsStatus({ error: '', success: '', loading: false });
-
-    const formData = new FormData();
-    formData.append('files', file);
-
-    try {
-      const result = await api.upload('/media/upload', formData);
-      if (result.media && result.media[0]) {
-        // Set the path to setting logo
-        const newLogoPath = result.media[0].filepath;
-        setLogo(newLogoPath);
-        setSettingsStatus({ error: '', success: 'Logo téléversé. Pensez à enregistrer les paramètres.', loading: false });
-      }
-    } catch (err) {
-      setSettingsStatus({ error: err.message || 'Erreur lors du téléversement du logo.', success: '', loading: false });
+      toast.error(err.message || 'Enregistrement impossible.');
     } finally {
-      setLogoUploading(false);
+      setSavingStore(false);
     }
+  };
+
+  const uploadLogo = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setLogoBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('files', file);
+      const res = await api.upload('/media/upload', fd);
+      if (res.media?.[0]) {
+        setLogo(res.media[0].filepath);
+        toast.info('Logo importé : cliquez sur « Enregistrer » pour l’appliquer.');
+      }
+    } catch (err) {
+      toast.error(err.message || 'Import du logo impossible.');
+    } finally {
+      setLogoBusy(false);
+    }
+  };
+
+  const submitPassword = async (e) => {
+    e.preventDefault();
+    setPwError('');
+    if (pw.next.length < 8) return setPwError('Le nouveau mot de passe doit contenir au moins 8 caractères.');
+    if (pw.next !== pw.confirm) return setPwError('Les deux mots de passe ne correspondent pas.');
+    if (pw.next === pw.current) return setPwError('Choisissez un mot de passe différent de l’actuel.');
+    setPwBusy(true);
+    try {
+      await changePassword(pw.current, pw.next);
+      setPw({ current: '', next: '', confirm: '' });
+      toast.success('Mot de passe mis à jour. Les autres appareils ont été déconnectés.');
+    } catch (err) {
+      setPwError(err.message || 'Changement impossible.');
+    } finally {
+      setPwBusy(false);
+    }
+  };
+
+  const changeServer = async () => {
+    const ok = await confirm({
+      tone: 'warning',
+      title: 'Changer de serveur ?',
+      message: 'Vous serez déconnecté et devrez saisir l’adresse du nouveau serveur.',
+      confirmLabel: 'Changer de serveur',
+    });
+    if (!ok) return;
+    clearServerUrl();
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    if (window.location.protocol === 'file:') { window.location.hash = '#/setup'; window.location.reload(); }
+    else window.location.href = '/setup';
   };
 
   return (
-    <Layout>
-      <div className="space-y-6">
-        {mustChangePassword && (
-          <div role="alert" className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm">
-            <strong>Action requise :</strong> ce compte utilise un mot de passe connu publiquement ou temporaire.
-            Choisissez un nouveau mot de passe (8 caractères minimum) pour continuer à utiliser l'application.
+    <div className="space-y-6">
+      <PageHeader title="Paramètres" description="Personnalisez votre magasin, l’apparence de l’interface et la sécurité de votre compte." />
+
+      {mustChangePassword && (
+        <div role="alert" className="flex items-start gap-3.5 rounded-2xl border border-warning/30 bg-warning/10 p-4 sm:p-5">
+          <ShieldAlert className="mt-0.5 size-5 shrink-0 text-warning" />
+          <div>
+            <p className="text-sm font-bold text-warning">Action requise : changez votre mot de passe</p>
+            <p className="mt-1 text-[13px] leading-relaxed text-muted">
+              Ce compte utilise un mot de passe connu publiquement ou temporaire. Choisissez-en un nouveau (8 caractères minimum) pour continuer à utiliser l’application.
+            </p>
           </div>
-        )}
-        {!isAdmin && (
-          <div className="p-3 rounded-lg bg-slate-800/60 border border-slate-700 text-slate-400 text-xs">
-            Les paramètres du magasin ne peuvent être modifiés que par un administrateur.
-          </div>
-        )}
-        {/* Header */}
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">Paramètres</h1>
-          <p className="text-slate-400 text-sm">
-            Personnalisez les informations globales et configurez les mots de passe.
-          </p>
+        </div>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-12">
+        <div className="space-y-6 lg:col-span-7">
+          {/* Store */}
+          <Card>
+            <CardHeader icon={Store} title="Votre magasin" description="Nom, logo et durée d’affichage par défaut" />
+            <CardBody>
+              {!isAdmin && (
+                <p className="mb-5 rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[13px] text-muted">
+                  Seul un administrateur peut modifier ces paramètres.
+                </p>
+              )}
+              <form onSubmit={saveStore} className="space-y-5">
+                <Field label="Nom du magasin" required>
+                  {(p) => <Input {...p} icon={Store} value={storeName} onChange={(e) => setStoreName(e.target.value)} disabled={!isAdmin} maxLength={100} placeholder="Ex. Boulangerie du Pont" />}
+                </Field>
+
+                <Field label="Durée d’affichage par défaut" hint="Appliquée aux nouvelles playlists (en secondes).">
+                  {(p) => (
+                    <Input {...p} icon={Clock} type="number" min="1" max="3600" value={defaultDuration} onChange={(e) => setDefaultDuration(Math.max(1, parseInt(e.target.value, 10) || 1))} disabled={!isAdmin} wrapperClassName="sm:max-w-48" />
+                  )}
+                </Field>
+
+                <div>
+                  <p className="label">Logo</p>
+                  <div className="flex items-center gap-4">
+                    <div className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-2xl border border-line bg-surface-2">
+                      {logo ? <img src={mediaUrl(logo)} alt="Logo du magasin" className="size-full object-contain p-2" /> : <Store className="size-7 text-subtle" />}
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" icon={Upload} loading={logoBusy} disabled={!isAdmin} onClick={() => logoInput.current?.click()}>
+                          {logo ? 'Changer le logo' : 'Importer un logo'}
+                        </Button>
+                        {logo && isAdmin && <Button size="sm" variant="ghost" onClick={() => setLogo('')}>Retirer</Button>}
+                      </div>
+                      <p className="text-xs text-subtle">PNG, JPG ou WEBP, de préférence carré ou horizontal.</p>
+                      <input ref={logoInput} type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" tabIndex={-1} onChange={uploadLogo} />
+                    </div>
+                  </div>
+                </div>
+
+                {isAdmin && (
+                  <div className="flex justify-end border-t border-line pt-5">
+                    <Button type="submit" variant="primary" loading={savingStore}>Enregistrer</Button>
+                  </div>
+                )}
+              </form>
+            </CardBody>
+          </Card>
+
+          {/* Appearance */}
+          <Card>
+            <CardHeader icon={Palette} tone="accent" title="Apparence" description="Choisissez le thème de l’interface d’administration" />
+            <CardBody>
+              <div role="radiogroup" aria-label="Thème" className="grid grid-cols-3 gap-3">
+                <ThemeCard value="light" label="Clair" active={theme === 'light'} onSelect={setTheme} preview={<MiniUi {...LIGHT} />} />
+                <ThemeCard value="dark" label="Sombre" active={theme === 'dark'} onSelect={setTheme} preview={<MiniUi {...DARK} />} />
+                <ThemeCard
+                  value="system"
+                  label="Automatique"
+                  active={theme === 'system'}
+                  onSelect={setTheme}
+                  preview={
+                    <>
+                      <div className="absolute inset-0"><MiniUi {...LIGHT} /></div>
+                      <div className="absolute inset-0 [clip-path:polygon(100%_0,100%_100%,0_100%)]"><MiniUi {...DARK} /></div>
+                    </>
+                  }
+                />
+              </div>
+              <p className="mt-4 text-xs text-subtle">« Automatique » suit le réglage clair/sombre de votre appareil.</p>
+            </CardBody>
+          </Card>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-          {/* Store Settings Form */}
-          <div className="glass-card rounded-2xl p-6 border border-slate-800 space-y-6">
-            <h2 className="text-base font-semibold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-              <Store className="w-5 h-5 text-brand-500" />
-              Configuration du Magasin
-            </h2>
+        <div className="space-y-6 lg:col-span-5">
+          {/* Security */}
+          <Card>
+            <CardHeader icon={Lock} tone="warning" title="Mot de passe" description="Changer le mot de passe de votre compte" />
+            <CardBody>
+              <form onSubmit={submitPassword} className="space-y-4">
+                {pwError && <div role="alert" className="rounded-xl border border-danger/25 bg-danger/10 px-3.5 py-2.5 text-sm font-medium text-danger">{pwError}</div>}
+                <Field label="Mot de passe actuel" required>
+                  {(p) => <PasswordInput {...p} icon={KeyRound} autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} required />}
+                </Field>
+                <Field label="Nouveau mot de passe" required hint="8 caractères minimum.">
+                  {(p) => (
+                    <>
+                      <PasswordInput {...p} icon={Lock} autoComplete="new-password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} required />
+                      <PasswordMeter value={pw.next} />
+                    </>
+                  )}
+                </Field>
+                <Field label="Confirmer le nouveau mot de passe" required>
+                  {(p) => <PasswordInput {...p} icon={Lock} autoComplete="new-password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} required />}
+                </Field>
+                <Button type="submit" variant="primary" className="w-full" loading={pwBusy}>Mettre à jour le mot de passe</Button>
+              </form>
+            </CardBody>
+          </Card>
 
-            {settingsStatus.error && (
-              <div className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 p-3 rounded-lg">
-                {settingsStatus.error}
-              </div>
-            )}
-
-            {settingsStatus.success && (
-              <div className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg flex items-center gap-2">
-                <CheckCircle className="w-4 h-4" />
-                {settingsStatus.success}
-              </div>
-            )}
-
-            <form onSubmit={handleSettingsSubmit} className="space-y-5">
-              {/* Store Name */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1.5">
-                  Nom du magasin
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={storeName}
-                  onChange={(e) => setStoreName(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg glass-input"
-                  placeholder="Ex: Boulangerie Du Pont"
-                />
-              </div>
-
-              {/* Default slide duration */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1.5 flex items-center gap-1">
-                  <Clock className="w-4 h-4 text-slate-400" />
-                  Durée par défaut (secondes)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  required
-                  value={defaultDuration}
-                  onChange={(e) => setDefaultDuration(parseInt(e.target.value))}
-                  className="w-full px-3 py-2 text-xs rounded-lg glass-input"
-                />
-              </div>
-
-              {/* Logo Preview & Uploader */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-2">
-                  Logo du magasin
-                </label>
-
-                <div className="flex items-center gap-5">
-                  <div className="w-16 h-16 rounded-xl bg-slate-950 flex items-center justify-center border border-slate-800 overflow-hidden relative shrink-0">
-                    {logo ? (
-                      <img
-                        src={mediaUrl(logo)}
-                        alt="Logo"
-                        className="w-full h-full object-contain p-1"
-                      />
-                    ) : (
-                      <span className="text-[10px] text-slate-600 font-bold">Aucun</span>
-                    )}
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <button
-                      type="button"
-                      disabled={logoUploading}
-                      onClick={() => logoInputRef.current?.click()}
-                      className="px-3.5 py-2 border border-slate-850 hover:bg-slate-800 text-slate-350 hover:text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all"
-                    >
-                      {logoUploading ? (
-                        <span className="w-3.5 h-3.5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <Upload className="w-3.5 h-3.5" />
-                      )}
-                      Téléverser une image
-                    </button>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      ref={logoInputRef}
-                      onChange={handleLogoUpload}
-                      className="hidden"
-                    />
-                    <p className="text-[10px] text-slate-500">
-                      Format PNG, JPG ou WEBP de préférence carré/horizontal.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Save settings Button */}
-              <button
-                type="submit"
-                disabled={settingsStatus.loading}
-                className="w-full py-2.5 bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white font-semibold text-xs rounded-lg shadow-md shadow-brand-500/20 transition-all flex justify-center items-center gap-1.5"
-              >
-                {settingsStatus.loading ? (
-                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : (
-                  'Enregistrer la configuration'
-                )}
-              </button>
-            </form>
-          </div>
-
-          {/* Server connection (native apps only) */}
-          {isNativeApp() && (
-            <div className="glass-card rounded-2xl p-6 border border-slate-800 space-y-4">
-              <h2 className="text-base font-semibold text-white border-b border-slate-800 pb-3">
-                Serveur
-              </h2>
-              <p className="text-xs text-slate-400">
-                Connecté à <span className="font-mono text-slate-200">{getServerUrl()}</span>
+          {/* TV address */}
+          <Card>
+            <CardHeader icon={Tv} tone="info" title="Connecter une TV" description="Adresse à ouvrir sur vos écrans" />
+            <CardBody className="space-y-3">
+              <TvAddress />
+              <p className="text-[13px] leading-relaxed text-muted">
+                Ouvrez cette adresse dans le navigateur de la TV : un code s’affiche, saisissez-le dans « Écrans ».
               </p>
-              <button
-                type="button"
-                onClick={() => {
-                  clearServerUrl();
-                  localStorage.removeItem('token');
-                  localStorage.removeItem('user');
-                  window.location.protocol === 'file:'
-                    ? (window.location.hash = '#/setup', window.location.reload())
-                    : (window.location.href = '/setup');
-                }}
-                className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm text-slate-100"
-              >
-                Changer de serveur
-              </button>
-            </div>
+            </CardBody>
+          </Card>
+
+          {isNativeApp() && (
+            <Card>
+              <CardHeader icon={Server} tone="success" title="Serveur" description="Serveur ImageScreen auquel cette application est connectée" />
+              <CardBody className="space-y-4">
+                <code className="block truncate rounded-xl border border-line bg-surface-2/70 px-3.5 py-2.5 font-mono text-[13px] font-semibold">{getServerUrl()}</code>
+                <Button variant="secondary" onClick={changeServer}>Changer de serveur</Button>
+              </CardBody>
+            </Card>
           )}
-
-          {/* Password Settings Form */}
-          <div className="glass-card rounded-2xl p-6 border border-slate-800 space-y-6">
-            <h2 className="text-base font-semibold text-white flex items-center gap-2 border-b border-slate-800 pb-3">
-              <Lock className="w-5 h-5 text-violet-400" />
-              Sécurité administrateur
-            </h2>
-
-            {passwordStatus.error && (
-              <div className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 p-3 rounded-lg">
-                {passwordStatus.error}
-              </div>
-            )}
-
-            {passwordStatus.success && (
-              <div className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg flex items-center gap-2">
-                <CheckCircle className="w-4 h-4" />
-                {passwordStatus.success}
-              </div>
-            )}
-
-            <form onSubmit={handlePasswordSubmit} className="space-y-4">
-              {/* Current Password */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1.5">
-                  Mot de passe actuel
-                </label>
-                <div className="relative">
-                  <input
-                    type={showCurrent ? 'text' : 'password'}
-                    required
-                    value={currentPassword}
-                    onChange={(e) => setCurrentPassword(e.target.value)}
-                    className="w-full px-3 py-2 text-xs rounded-lg glass-input pr-10"
-                    placeholder="••••••••"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowCurrent(!showCurrent)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-white"
-                  >
-                    {showCurrent ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* New Password */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1.5">
-                  Nouveau mot de passe
-                </label>
-                <div className="relative">
-                  <input
-                    type={showNew ? 'text' : 'password'}
-                    required
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full px-3 py-2 text-xs rounded-lg glass-input pr-10"
-                    placeholder="Min 6 caractères"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowNew(!showNew)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-white"
-                  >
-                    {showNew ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Confirm Password */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 mb-1.5">
-                  Confirmer le nouveau mot de passe
-                </label>
-                <input
-                  type="password"
-                  required
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg glass-input"
-                  placeholder="Confirmer"
-                />
-              </div>
-
-              {/* Password update Button */}
-              <button
-                type="submit"
-                disabled={passwordStatus.loading}
-                className="w-full py-2.5 bg-violet-600 hover:bg-violet-750 disabled:opacity-50 text-white font-semibold text-xs rounded-lg shadow-md shadow-violet-500/20 transition-all flex justify-center items-center gap-1.5"
-              >
-                {passwordStatus.loading ? (
-                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : (
-                  'Mettre à jour le mot de passe'
-                )}
-              </button>
-            </form>
-          </div>
         </div>
       </div>
-    </Layout>
+    </div>
   );
 }
