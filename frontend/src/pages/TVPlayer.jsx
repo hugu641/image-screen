@@ -93,6 +93,11 @@ function Splash({ storeName, logoUrl, message, online }) {
   );
 }
 
+// Videos above this size are streamed from the server instead of being loaded into the TV's
+// memory (a multi-GB file would crash the device). Images and small videos are kept offline.
+const CACHE_MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+const isCacheable = (item) => !String(item.mime_type || '').startsWith('video/') || Number(item.size || 0) <= CACHE_MAX_VIDEO_BYTES;
+
 function PairingView({ code, screenId, storeName, logoUrl, online }) {
   const server = getServerUrl();
   const qrTarget = `${server}/screens?code=${code}`;
@@ -237,7 +242,7 @@ export default function TVPlayer() {
       const url = mediaUrl(item.filepath);
       let localUrl = url;
       try {
-        const match = cache && (await cache.match(url));
+        const match = cache && isCacheable(item) && (await cache.match(url));
         if (match) localUrl = URL.createObjectURL(await match.blob());
       } catch { /* fall back to network URL */ }
       loaded.push({ ...item, localUrl });
@@ -312,7 +317,7 @@ export default function TVPlayer() {
     for (const item of mediaList) {
       const url = mediaUrl(item.filepath);
       let localUrl = url;
-      if (cache) {
+      if (cache && isCacheable(item)) {
         try {
           if (!(await cache.match(url))) await cache.add(url);
           const cached = await cache.match(url);

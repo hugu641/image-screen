@@ -33,7 +33,11 @@ import MediaThumb from '../components/MediaThumb';
 import { cn } from '../utils/cn';
 import { formatBytes, formatDate, plural } from '../utils/format';
 
-const MAX_FILE_BYTES = 100 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 50 * 1024 * 1024;   // images are compressed in memory on the server
+const MAX_VIDEO_BYTES = 5 * 1024 * 1024 * 1024; // videos are streamed to disk on the server
+/** Size limit depending on the kind of file (same limits as the server). */
+const sizeLimit = (f) => (f.type.startsWith('video/') || /\.mp4$/i.test(f.name) ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES);
+const limitLabel = (f) => (sizeLimit(f) === MAX_VIDEO_BYTES ? '5 Go' : '50 Mo');
 const BATCH = 5; // server accepts at most 5 files per request
 const ACCEPT = 'image/jpeg,image/png,image/webp,video/mp4';
 
@@ -230,9 +234,9 @@ export default function MediaLibrary() {
   /* Upload (batches of 5 with overall progress) */
   const uploadFiles = useCallback(async (fileList) => {
     const all = [...fileList];
-    const tooBig = all.filter((f) => f.size > MAX_FILE_BYTES);
-    tooBig.forEach((f) => toast.error(`« ${f.name} » dépasse 100 Mo et n’a pas été envoyé.`));
-    const files = all.filter((f) => f.size <= MAX_FILE_BYTES);
+    const tooBig = all.filter((f) => f.size > sizeLimit(f));
+    tooBig.forEach((f) => toast.error(`« ${f.name} » dépasse ${limitLabel(f)} et n’a pas été envoyé.`));
+    const files = all.filter((f) => f.size <= sizeLimit(f));
     if (!files.length) return;
 
     const totalBytes = files.reduce((n, f) => n + f.size, 0);
@@ -405,7 +409,7 @@ export default function MediaLibrary() {
             <div className="relative grid size-16 place-items-center rounded-3xl bg-brand-gradient text-white shadow-btn"><Upload className="size-7" /></div>
           </div>
           <p className="font-display text-xl font-extrabold">Glissez vos photos et vidéos ici</p>
-          <p className="mx-auto mt-2 max-w-md text-sm text-muted">ou cliquez pour parcourir vos fichiers. Formats : JPG, PNG, WEBP, MP4 — 100 Mo maximum par fichier.</p>
+          <p className="mx-auto mt-2 max-w-md text-sm text-muted">ou cliquez pour parcourir vos fichiers. Formats : JPG, PNG, WEBP, MP4 — 50 Mo maximum par image, 5 Go par vidéo.</p>
         </button>
       ) : visible.length === 0 ? (
         <Card><EmptyState icon={FolderOpen} title="Aucun média trouvé" description="Modifiez votre recherche ou le filtre de type." action={<Button onClick={() => { setSearch(''); setType('all'); }}>Réinitialiser</Button>} /></Card>

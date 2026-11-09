@@ -371,7 +371,7 @@ function SelfHost() {
 const FAQS = [
   { q: 'Comment connecter ma première télévision ?', a: 'Ouvrez l’adresse /tv de votre serveur (par exemple http://192.168.1.50:5000/tv) dans le navigateur de la TV. Elle affiche un code à 6 caractères : saisissez-le dans la page « Écrans » de l’administration pour associer l’écran.' },
   { q: 'Est-ce que ça fonctionne sans Internet ?', a: 'Oui. Dès qu’une playlist est affectée, la TV télécharge les médias et les conserve en cache : la diffusion continue en cas de coupure. Seul le réseau local vers votre serveur est nécessaire pour recevoir les mises à jour.' },
-  { q: 'Quels formats de fichiers sont acceptés ?', a: 'Images JPG, PNG et WEBP, et vidéos MP4, jusqu’à 100 Mo par fichier. Les images sont automatiquement redimensionnées et optimisées à l’import.' },
+  { q: 'Quels formats de fichiers sont acceptés ?', a: 'Images JPG, PNG et WEBP jusqu’à 50 Mo, et vidéos MP4 jusqu’à 5 Go. Les images sont automatiquement redimensionnées et optimisées à l’import.' },
   { q: 'Combien d’écrans puis-je connecter ?', a: 'Le logiciel n’impose pas de limite. En pratique, c’est la puissance de votre serveur et de votre réseau qui comptent ; quelques dizaines d’écrans restent confortables sur un petit serveur.' },
   { q: 'Où sont stockées mes données ?', a: 'Uniquement sur votre serveur : une base SQLite et un dossier pour vos médias. Rien n’est envoyé vers un service tiers.' },
   { q: 'Puis-je l’utiliser sur un Fire TV Stick ou une Android TV ?', a: 'Oui, le lecteur fonctionne dans le navigateur de la plupart des télévisions connectées, Fire TV Stick et Android TV compris, ainsi que sur un mini-PC en mode kiosque.' },

@@ -21,6 +21,10 @@ const apiRouter = require('./routes/api');
 
 const app = express();
 const server = http.createServer(app);
+// A large upload (several GB over a home connection) can take much longer than Node's default
+// 5-minute request limit: no absolute limit, but a connection that stalls for 2 minutes is closed.
+server.requestTimeout = 0;
+server.timeout = 120 * 1000;
 
 // ─── Trust Proxy ────────────────────────────────────────────────────────────
 // Only trust X-Forwarded-* headers when TRUST_PROXY is set (e.g. TRUST_PROXY=1 behind
@@ -166,6 +170,7 @@ const PORT = process.env.PORT || 5000;
 async function start() {
   console.log('🔥  Connecting to SQLite Database...');
   await initDb();
+  await require('./controllers/mediaController').cleanIncoming(); // uploads interrupted by a restart
   await housekeeping();
   setInterval(housekeeping, 60 * 60 * 1000).unref();
 
