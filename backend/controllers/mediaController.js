@@ -1,31 +1,21 @@
 const multer = require('multer');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { fdb } = require('../database/db');
 const { compressImageBuffer } = require('../services/compressionService');
 const { logEvent } = require('../services/socketService');
+const { UPLOADS_DIR } = require('../config/paths');
+const { detectFileType, imageSizeIsSafe, sanitizeDisplayName } = require('../services/fileValidation');
 
 // ─── Multer : stockage en mémoire ───────────────────────────────────────────
-const fileFilter = (req, file, cb) => {
-  const allowedMimeTypes = [
-    'image/jpeg',
-    'image/jpg',
-    'image/png',
-    'image/webp',
-    'video/mp4'
-  ];
-  if (allowedMimeTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Format de fichier non pris en charge. (JPG, PNG, WEBP, MP4 acceptés)'), false);
-  }
-};
-
+// The declared Content-Type is NOT trusted (clients often send application/octet-stream and
+// attackers can send anything): the real type is detected from the file content below.
+// Files are held in memory (needed for image compression): keep the worst case small.
 const upload = multer({
   storage: multer.memoryStorage(),
-  fileFilter,
-  limits: { fileSize: 100 * 1024 * 1024 } // 100 MB
-}).array('files', 10);
+  limits: { fileSize: 100 * 1024 * 1024, files: 5, fields: 5, fieldSize: 1024 } // 100 MB per file, 5 files max
+}).array('files', 5);
 
 // ─── Controller functions ─────────────────────────────────────────────────────
 
@@ -42,39 +32,63 @@ async function uploadMedia(req, res) {
     const uploadedItems = [];
 
     try {
-      // S'assurer que le dossier uploads existe
-      const uploadsDir = path.join(__dirname, '..', 'uploads');
+      const uploadsDir = UPLOADS_DIR;
       if (!fs.existsSync(uploadsDir)) {
         fs.mkdirSync(uploadsDir, { recursive: true });
       }
 
-      for (const file of req.files) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-        const ext = path.extname(file.originalname);
-        const filename = `file-${uniqueSuffix}${ext}`;
+      // Storage quota (disk-filling protection)
+      const maxBytes = (Number(process.env.MAX_STORAGE_MB) || 20480) * 1024 * 1024;
+      const incoming = req.files.reduce((n, f) => n + f.size, 0);
+      if ((await fdb.sumMediaSize()) + incoming > maxBytes) {
+        return res.status(413).json({ error: "Espace de stockage plein. Supprimez des médias avant d'en ajouter." });
+      }
 
+      for (const file of req.files) {
+        // The type is decided by the file CONTENT, not by what the client declared
+        const detected = detectFileType(file.buffer);
+        if (!detected) {
+          return res.status(400).json({
+            error: `« ${sanitizeDisplayName(file.originalname)} » n'est pas un fichier JPG, PNG, WEBP ou MP4 valide.`
+          });
+        }
+        if (detected.kind === 'image' && !imageSizeIsSafe(file.buffer, detected.mime)) {
+          return res.status(400).json({
+            error: `L'image « ${sanitizeDisplayName(file.originalname)} » est illisible ou trop grande en dimensions.`
+          });
+        }
+      }
+
+      for (const file of req.files) {
+        const detected = detectFileType(file.buffer);
+        let mime = detected.mime;
+        let ext = detected.ext;
         let buffer = file.buffer;
         let size = file.size;
 
         // Compression en mémoire pour les images
-        if (file.mimetype.startsWith('image/')) {
-          const compressed = await compressImageBuffer(buffer, file.mimetype);
+        if (detected.kind === 'image') {
+          const compressed = await compressImageBuffer(buffer, mime);
           if (compressed) {
             buffer = compressed;
             size = compressed.length;
+            mime = 'image/jpeg'; // the compressor always outputs JPEG
+            ext = '.jpg';
           }
         }
 
-        // Sauvegarder sur le disque local
+        // Server-generated name: random, extension from the detected type only
+        const filename = `file-${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
         const uploadPath = path.join(uploadsDir, filename);
-        await fs.promises.writeFile(uploadPath, buffer);
+        await fs.promises.writeFile(uploadPath, buffer, { mode: 0o644 });
 
         // Enregistrer en SQLite (filepath = chemin relatif /uploads/...)
         const publicUrl = `/uploads/${filename}`;
+        const displayName = sanitizeDisplayName(file.originalname);
         const mediaId = await fdb.add('media', {
           filename,
-          original_name: file.originalname,
-          mime_type: file.mimetype,
+          original_name: displayName,
+          mime_type: mime,
           size,
           filepath: publicUrl
         });
@@ -82,7 +96,7 @@ async function uploadMedia(req, res) {
         const newMedia = await fdb.getById('media', mediaId);
         uploadedItems.push(newMedia);
 
-        await logEvent(null, 'info', `Média ajouté : ${file.originalname}`);
+        await logEvent(null, 'info', `Média ajouté : ${displayName}`);
       }
 
       res.status(201).json({
@@ -94,6 +108,18 @@ async function uploadMedia(req, res) {
       res.status(500).json({ error: "Une erreur est survenue lors de l'enregistrement des fichiers." });
     }
   });
+}
+
+// Storage used vs. the configured quota (MAX_STORAGE_MB), for the usage gauge in the UI
+async function mediaUsage(req, res) {
+  try {
+    const used = await fdb.sumMediaSize();
+    const max = (Number(process.env.MAX_STORAGE_MB) || 20480) * 1024 * 1024;
+    res.json({ used, max });
+  } catch (error) {
+    console.error('Media usage error:', error);
+    res.status(500).json({ error: "Impossible de calculer l'espace utilisé." });
+  }
 }
 
 async function listMedia(req, res) {
@@ -133,7 +159,7 @@ async function deleteMedia(req, res) {
     }
 
     // Supprimer du disque local
-    const filePath = path.join(__dirname, '..', 'uploads', media.filename);
+    const filePath = path.join(UPLOADS_DIR, path.basename(String(media.filename)));
     try {
       if (fs.existsSync(filePath)) {
         await fs.promises.unlink(filePath);
@@ -155,9 +181,9 @@ async function deleteMedia(req, res) {
 
 async function renameMedia(req, res) {
   const { id } = req.params;
-  const { name } = req.body;
+  const name = typeof req.body?.name === 'string' ? sanitizeDisplayName(req.body.name) : '';
 
-  if (!name || name.trim() === '') {
+  if (!name) {
     return res.status(400).json({ error: 'Le nom ne peut pas être vide.' });
   }
 
@@ -182,6 +208,7 @@ async function renameMedia(req, res) {
 }
 
 module.exports = {
+  mediaUsage,
   uploadMedia,
   listMedia,
   deleteMedia,

@@ -5,7 +5,8 @@ const {
   notifyScreenAssociation,
   notifyPlaylistUpdate,
   forceScreenSync,
-  broadcastScreenListUpdate
+  broadcastScreenListUpdate,
+  publicScreen
 } = require('../services/socketService');
 
 async function listScreens(req, res) {
@@ -19,7 +20,7 @@ async function listScreens(req, res) {
         const playlist = await fdb.getById('playlists', screen.playlist_id);
         playlist_name = playlist ? playlist.name : null;
       }
-      return { ...screen, playlist_name };
+      return { ...publicScreen(screen), playlist_name };
     }));
 
     res.json(result);
@@ -30,7 +31,9 @@ async function listScreens(req, res) {
 }
 
 async function associateScreen(req, res) {
-  const { code, name, playlistId } = req.body;
+  const { playlistId } = req.body || {};
+  const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 60) : '';
 
   if (!code || !name) {
     return res.status(400).json({ error: "Le code d'association et le nom de l'écran sont requis." });
@@ -71,9 +74,9 @@ async function associateScreen(req, res) {
 
 async function renameScreen(req, res) {
   const { id } = req.params;
-  const { name } = req.body;
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 60) : '';
 
-  if (!name || name.trim() === '') {
+  if (!name) {
     return res.status(400).json({ error: "Le nom de l'écran ne peut pas être vide." });
   }
 

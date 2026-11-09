@@ -1,133 +1,117 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
+import { BrowserRouter, HashRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './hooks/useAuth';
+import { ThemeProvider } from './hooks/useTheme';
+import { needsServerSetup } from './services/serverConfig';
+import { ToastProvider } from './components/ui/Toast';
+import { ConfirmProvider } from './components/ui/Confirm';
+import ErrorBoundary from './components/ui/ErrorBoundary';
+import { LogoMark } from './components/ui/Logo';
+import AppShell from './layouts/Layout';
 
-// Pages
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import Screens from './pages/Screens';
-import Playlists from './pages/Playlists';
-import MediaLibrary from './pages/MediaLibrary';
-import Settings from './pages/Settings';
-import TVPlayer from './pages/TVPlayer';
-import LivePreview from './pages/LivePreview';
-import Home from './pages/Home';
-import AdminPanel from './pages/AdminPanel';
+// Pages are loaded on demand: the TV player (/tv) never downloads the admin code, which keeps
+// start-up fast on low-power TVs.
+const Home = lazy(() => import('./pages/Home'));
+const Login = lazy(() => import('./pages/Login'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Screens = lazy(() => import('./pages/Screens'));
+const Playlists = lazy(() => import('./pages/Playlists'));
+const MediaLibrary = lazy(() => import('./pages/MediaLibrary'));
+const Settings = lazy(() => import('./pages/Settings'));
+const TVPlayer = lazy(() => import('./pages/TVPlayer'));
+const LivePreview = lazy(() => import('./pages/LivePreview'));
+const AdminPanel = lazy(() => import('./pages/AdminPanel'));
+const ServerSetup = lazy(() => import('./pages/ServerSetup'));
 
-// Protected Route Guard
-function ProtectedRoute({ children }) {
-  const { isAuthenticated, loading } = useAuth();
+const APP_MODE = import.meta.env.VITE_APP_MODE || 'web';
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-dark-950 flex flex-col items-center justify-center text-slate-100">
-        <div className="w-8 h-8 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mb-3" />
-        <span className="text-xs text-slate-400 font-semibold">Vérification de la session...</span>
-      </div>
-    );
+// file:// (Electron) has no server-side routing, so use hash URLs there.
+const Router = window.location.protocol === 'file:' ? HashRouter : BrowserRouter;
+
+// Native apps with no server chosen yet are sent to /setup before anything else.
+function SetupGate({ children }) {
+  const location = useLocation();
+  if (needsServerSetup() && location.pathname !== '/setup') {
+    return <Navigate to="/setup" replace />;
   }
-
-  return isAuthenticated ? children : <Navigate to="/login" replace />;
+  return children;
 }
 
-// Admin Route Guard
-function AdminRoute({ children }) {
-  const { isAuthenticated, isAdmin, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-dark-950 flex flex-col items-center justify-center text-slate-100">
-        <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin mb-3" />
-        <span className="text-xs text-slate-400 font-semibold">Vérification des droits...</span>
+function Splash({ label }) {
+  return (
+    <div className="bg-aurora grid min-h-dvh place-items-center bg-bg">
+      <div className="flex flex-col items-center gap-5">
+        <LogoMark className="size-14 animate-pulse" />
+        <p className="text-sm font-semibold text-muted">{label}</p>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
-  if (!isAdmin) return <Navigate to="/dashboard" replace />;
-  return children;
+/** Requires a signed-in user and renders the application shell around the nested routes. */
+function RequireAuth() {
+  const { isAuthenticated, loading, mustChangePassword } = useAuth();
+  const location = useLocation();
+
+  if (loading) return <Splash label="Vérification de la session…" />;
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}` }} />;
+  }
+  // A pending password change (e.g. an account that still had a public default password)
+  // blocks everything except the Settings page where it can be done.
+  if (mustChangePassword && location.pathname !== '/settings') {
+    return <Navigate to="/settings" replace />;
+  }
+  return <AppShell />;
+}
+
+function RequireAdmin() {
+  const { isAdmin } = useAuth();
+  return isAdmin ? <Outlet /> : <Navigate to="/dashboard" replace />;
 }
 
 export default function App() {
   return (
-    <AuthProvider>
-      <Router>
-        <Routes>
-          {/* Public Authentication */}
-          <Route path="/login" element={<Login />} />
+    <ThemeProvider>
+      <ToastProvider>
+        <ConfirmProvider>
+          <ErrorBoundary>
+            <AuthProvider>
+              <Router>
+                <SetupGate>
+                  <Suspense fallback={<Splash label="Chargement…" />}>
+                  <Routes>
+                    {/* Server address (native apps, first launch) */}
+                    <Route path="/setup" element={<ServerSetup />} />
 
-          {/* Fullscreen TV Player */}
-          <Route path="/tv" element={<TVPlayer />} />
+                    {/* Public */}
+                    <Route path="/login" element={<Login />} />
+                    <Route path="/tv" element={<TVPlayer />} />
+                    {/* The TV app has no landing page: it opens straight on the player */}
+                    <Route path="/" element={APP_MODE === 'tv' ? <Navigate to="/tv" replace /> : <Home />} />
 
-          {/* Public Home Page */}
-          <Route path="/" element={<Home />} />
+                    {/* Administration (signed-in users) */}
+                    <Route element={<RequireAuth />}>
+                      <Route path="/dashboard" element={<Dashboard />} />
+                      <Route path="/screens" element={<Screens />} />
+                      <Route path="/playlists" element={<Playlists />} />
+                      <Route path="/media" element={<MediaLibrary />} />
+                      <Route path="/settings" element={<Settings />} />
+                      <Route path="/admin/preview/:id" element={<LivePreview />} />
+                      <Route element={<RequireAdmin />}>
+                        <Route path="/admin" element={<AdminPanel />} />
+                      </Route>
+                    </Route>
 
-          {/* Protected Administration Panel */}
-          <Route
-            path="/dashboard"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/screens"
-            element={
-              <ProtectedRoute>
-                <Screens />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/playlists"
-            element={
-              <ProtectedRoute>
-                <Playlists />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/media"
-            element={
-              <ProtectedRoute>
-                <MediaLibrary />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <ProtectedRoute>
-                <Settings />
-              </ProtectedRoute>
-            }
-          />
-          
-          {/* Live Preview */}
-          <Route
-            path="/admin/preview/:id"
-            element={
-              <ProtectedRoute>
-                <LivePreview />
-              </ProtectedRoute>
-            }
-          />
-
-          {/* Admin Panel */}
-          <Route
-            path="/admin"
-            element={
-              <AdminRoute>
-                <AdminPanel />
-              </AdminRoute>
-            }
-          />
-
-          {/* Fallback Route */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Router>
-    </AuthProvider>
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                  </Suspense>
+                </SetupGate>
+              </Router>
+            </AuthProvider>
+          </ErrorBoundary>
+        </ConfirmProvider>
+      </ToastProvider>
+    </ThemeProvider>
   );
 }

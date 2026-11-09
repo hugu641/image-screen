@@ -18,14 +18,30 @@ async function getSettings(req, res) {
 }
 
 async function updateSettings(req, res) {
-  const { store_name, default_duration, logo } = req.body;
+  const { store_name, default_duration, logo } = req.body || {};
 
   try {
     const updates = {};
 
-    if (store_name !== undefined) updates.store_name = store_name;
-    if (default_duration !== undefined) updates.default_duration = String(default_duration);
-    if (logo !== undefined) updates.logo = logo;
+    if (store_name !== undefined) {
+      if (typeof store_name !== 'string' || store_name.trim().length > 100) {
+        return res.status(400).json({ error: 'Nom du magasin invalide (100 caractères maximum).' });
+      }
+      updates.store_name = store_name.trim();
+    }
+    if (default_duration !== undefined) {
+      const d = Number(default_duration);
+      if (!Number.isFinite(d) || d < 1 || d > 3600) {
+        return res.status(400).json({ error: 'Durée par défaut invalide (1 à 3600 secondes).' });
+      }
+      updates.default_duration = String(Math.round(d));
+    }
+    if (logo !== undefined) {
+      // Only an uploaded file path or an http(s) URL — never javascript:/data: URLs
+      const okLogo = logo === '' || (typeof logo === 'string' && logo.length <= 500 && /^(\/uploads\/[\w.-]+|https?:\/\/[^\s]+)$/.test(logo));
+      if (!okLogo) return res.status(400).json({ error: 'Logo invalide.' });
+      updates.logo = logo;
+    }
 
     await fdb.set('settings', 'config', updates);
     await logEvent(null, 'info', 'Paramètres système mis à jour');

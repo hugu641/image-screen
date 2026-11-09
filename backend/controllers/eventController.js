@@ -1,7 +1,8 @@
 const { fdb } = require('../database/db');
 
 async function listEvents(req, res) {
-  const limit = req.query.limit ? parseInt(req.query.limit) : 50;
+  const requested = parseInt(req.query.limit, 10);
+  const limit = Math.min(Math.max(Number.isFinite(requested) ? requested : 50, 1), 500);
 
   try {
     const events = await fdb.getAll(

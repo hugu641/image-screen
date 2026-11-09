@@ -1,27 +1,33 @@
 /**
  * socket.js — Socket.IO client
  *
- * Uses the same server URL resolution as api.js:
- *  1. localStorage["server_url"] if set (cloud / remote server)
- *  2. import.meta.env.VITE_SERVER_URL ← set at build time via Vercel env variables
- *  3. window.location.origin otherwise (same-origin, works locally and in production)
+ * Uses the same server URL resolution as api.js (see serverConfig.js).
  */
 import { io } from 'socket.io-client';
+import { getServerUrl } from './serverConfig';
 
-function getSocketUrl() {
-  // 1. Manual override
-  const saved = localStorage.getItem('server_url');
-  if (saved && saved.trim() !== '') {
-    return saved.trim().replace(/\/$/, '');
-  }
-  // 2. Build-time env variable
-  const envUrl = import.meta.env.VITE_SERVER_URL;
-  if (envUrl && envUrl.trim() !== '') {
-    return envUrl.trim().replace(/\/$/, '');
-  }
-  // 3. Same-origin fallback
-  return window.location.origin;
+/** Random hex string from the browser's CSPRNG. */
+export function randomHex(bytes) {
+  const buf = new Uint8Array(bytes);
+  crypto.getRandomValues(buf);
+  return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+/**
+ * Per-device secret of a TV screen. It never leaves the device except in the socket
+ * handshake: the server stores only its hash, so nobody who merely knows the screen id
+ * can impersonate the screen.
+ */
+export function getScreenToken() {
+  let token = localStorage.getItem('screen_token');
+  if (!token || token.length < 32) {
+    token = randomHex(24);
+    localStorage.setItem('screen_token', token);
+  }
+  return token;
+}
+
+const getSocketUrl = getServerUrl;
 
 let socket = null;
 
@@ -46,7 +52,12 @@ export function initSocket(type, screenId = null) {
     reconnectionDelayMax: 10000,
     reconnectionAttempts: Infinity,
     // Allow credentials when server enforces a stricter CORS policy (cloud mode)
-    withCredentials: true
+    // Evaluated on every (re)connection so a refreshed login token is always used
+    auth: (cb) => cb(
+      type === 'admin'
+        ? { token: localStorage.getItem('token') || '' }
+        : { screenToken: getScreenToken() }
+    )
   });
 
   socket.on('connect', () => {

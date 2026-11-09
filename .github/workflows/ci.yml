@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: backend
+      - name: Security & unit tests
+        run: npm test
+        working-directory: backend
+      - name: Dependency audit (production, fails on high/critical)
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: backend
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --legacy-peer-deps
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+      - name: Dependency audit (production, fails on high/critical)
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: frontend

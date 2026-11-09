@@ -1,0 +1,12 @@
+{
+  "appId": "app.imagescreen.player",
+  "appName": "ImageScreen TV",
+  "webDir": "../frontend/dist-tv",
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "server": {
+    "androidScheme": "http"
+  }
+}

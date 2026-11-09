@@ -1,5 +1,0 @@
-PORT=57000
-JWT_SECRET=Kof12511HuguANofehdzqdz
-SERVER_URL=http://82.67.185.242:57000
-ALLOWED_ORIGINS=https://imagescreen.vercel.app
-FIREBASE_STORAGE_BUCKET=image-screen.appspot.com

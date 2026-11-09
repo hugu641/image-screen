@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
 import { api } from '../services/api';
+import { disconnectSocket } from '../services/socket';
 
 const AuthContext = createContext(null);
 
@@ -31,10 +32,11 @@ export function AuthProvider({ children }) {
     loadUser();
   }, []);
 
-  const register = async (email, password, name) => {
-    const data = await api.post('/auth/register', { email, password, name });
+  const register = async (email, password, name, setupToken) => {
+    const data = await api.post('/auth/register', { email, password, name, setupToken });
     localStorage.setItem('token', data.token);
     localStorage.setItem('user', JSON.stringify(data.user));
+    disconnectSocket(); // reconnect with the new credentials
     setUser(data.user);
     return data;
   };
@@ -43,6 +45,7 @@ export function AuthProvider({ children }) {
     const data = await api.post('/auth/login', { email, password });
     localStorage.setItem('token', data.token);
     localStorage.setItem('user', JSON.stringify(data.user));
+    disconnectSocket();
     setUser(data.user);
     return data;
   };
@@ -50,11 +53,20 @@ export function AuthProvider({ children }) {
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    disconnectSocket();
     setUser(null);
   };
 
   const changePassword = async (currentPassword, newPassword) => {
-    return await api.put('/auth/update-password', { currentPassword, newPassword });
+    const data = await api.put('/auth/update-password', { currentPassword, newPassword });
+    // The server revokes every older token and returns a fresh one
+    if (data.token) {
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      disconnectSocket();
+      setUser(data.user);
+    }
+    return data;
   };
 
   const value = {
@@ -67,12 +79,14 @@ export function AuthProvider({ children }) {
     changePassword,
     isAuthenticated: !!user,
     isAdmin: user?.role === 'admin',
+    mustChangePassword: !!user?.mustChangePassword,
     role: user?.role || null,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) {

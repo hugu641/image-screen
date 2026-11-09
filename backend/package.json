@@ -4,17 +4,26 @@
   "description": "Store Digital Signage Backend",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "express-rate-limit": "^8.7.2",
+    "helmet": "^8.3.0",
     "jimp": "^0.22.12",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "socket.io": "^4.7.5",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^6.0.1"
+  },
+  "overrides": {
+    "qs": "^6.16.2"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.4"
   }
 }

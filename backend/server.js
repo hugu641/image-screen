@@ -1,3 +1,6 @@
+// Never run in development mode by accident: dev mode leaks stack traces to clients
+process.env.NODE_ENV = process.env.NODE_ENV || 'production';
+
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
@@ -8,7 +11,11 @@ const dotenv = require('dotenv');
 // Load environment variables
 dotenv.config();
 
-const { initDb } = require('./database/db');
+const helmet = require('helmet');
+const { initDb, fdb } = require('./database/db');
+const { UPLOADS_DIR } = require('./config/paths');
+require('./config/secrets'); // fail fast / generate the JWT secret before serving requests
+const { parseAllowedOrigins, originOption, trustProxySetting } = require('./config/network');
 const socketService = require('./services/socketService');
 const apiRouter = require('./routes/api');
 
@@ -16,46 +23,86 @@ const app = express();
 const server = http.createServer(app);
 
 // ─── Trust Proxy ────────────────────────────────────────────────────────────
-// Essential when deployed behind Nginx, Cloudflare, Render, Railway, etc.
-// This lets Express read the real client IP from the X-Forwarded-For header.
-app.set('trust proxy', true);
+// Only trust X-Forwarded-* headers when TRUST_PROXY is set (e.g. TRUST_PROXY=1 behind
+// Caddy/Nginx/Cloudflare). Otherwise clients could spoof their IP address.
+app.set('trust proxy', trustProxySetting());
+app.disable('x-powered-by');
 
-// ─── CORS Configuration ──────────────────────────────────────────────────────
-// In production, set ALLOWED_ORIGINS in your .env file (comma-separated list).
-// Example: ALLOWED_ORIGINS=https://mystore.onrender.com,https://mystore.com
-// If not set, all origins are allowed (suitable for local / intranet deployments).
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : null; // null = wildcard
-
-app.use(cors({
-  origin: allowedOrigins
-    ? (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) {
-          callback(null, true);
-        } else {
-          callback(new Error(`Origin ${origin} not allowed by CORS policy.`));
-        }
-      }
-    : '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+// ─── Security headers ───────────────────────────────────────────────────────
+// CSP: the app is a same-origin SPA. Images come from the server itself or data/blob URLs;
+// connections only go back to this server (HTTP + WebSocket). No third-party hosts.
+app.use(helmet({
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      fontSrc: ["'self'", 'data:'],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      mediaSrc: ["'self'", 'blob:', 'data:'],
+      connectSrc: ["'self'", 'ws:', 'wss:'],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'self'"],
+    },
+  },
+  // Media must be loadable from the native apps (different origin than the server)
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginEmbedderPolicy: false,
+  // HSTS is only meaningful behind HTTPS; the reverse proxy (Caddy) can add it
+  hsts: false,
 }));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// ─── CORS Configuration ──────────────────────────────────────────────────────
+// Authentication uses a Bearer token (no cookies), so a wildcard origin does not expose
+// sessions to other sites. In production you can still restrict it with ALLOWED_ORIGINS
+// (comma-separated); the native apps' origins are always allowed.
+const allowedOrigins = parseAllowedOrigins();
+
+app.use(cors({
+  origin: originOption(allowedOrigins),
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 600
+}));
+
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
 // ─── Static Uploads ──────────────────────────────────────────────────────────
-// Les fichiers médias sont désormais hébergés sur Firebase Storage.
-// Ce bloc n'est conservé que pour la compatibilité avec d'anciens fichiers locaux.
-const uploadsDir = path.join(__dirname, 'uploads');
-if (fs.existsSync(uploadsDir)) {
-  app.use('/uploads', express.static(uploadsDir));
-}
+// Uploaded media is served as inert content: never sniffed, never allowed to run scripts.
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+app.use('/uploads', express.static(UPLOADS_DIR, {
+  index: false,
+  dotfiles: 'deny',
+  setHeaders(res) {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+  }
+}));
 
 // ─── REST API ────────────────────────────────────────────────────────────────
+// Warn once if the app sits behind a proxy but TRUST_PROXY is unset: every visitor would then
+// share the proxy's IP, so rate limits would apply to everyone at once.
+let warnedProxy = false;
+app.use((req, res, next) => {
+  if (!warnedProxy && req.headers['x-forwarded-for'] && !app.get('trust proxy')) {
+    warnedProxy = true;
+    console.warn('⚠️  X-Forwarded-For received but TRUST_PROXY is not set: behind a reverse proxy, set TRUST_PROXY=1 so rate limiting sees real client IPs.');
+  }
+  next();
+});
+
+// API responses (tokens, user data) must never be stored by browsers or shared caches
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 app.use('/api', apiRouter);
+app.use('/api', (req, res) => res.status(404).json({ error: 'Route introuvable.' }));
 
 // ─── Socket.IO ───────────────────────────────────────────────────────────────
 socketService.init(server, allowedOrigins);
@@ -90,12 +137,44 @@ if (fs.existsSync(frontendDist)) {
   });
 }
 
+// ─── Error handler ───────────────────────────────────────────────────────────
+// Never expose stack traces or internals to clients.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  const status = Number(err.status || err.statusCode) || 500;
+  if (status >= 500) console.error('Unhandled error:', err);
+  if (res.headersSent) return;
+  const messages = { 400: 'Requête invalide.', 413: 'Requête trop volumineuse.', 415: 'Type de contenu non supporté.' };
+  res.status(status >= 400 && status < 600 ? status : 500).json({ error: messages[status] || 'Erreur serveur.' });
+});
+
+// ─── Housekeeping ────────────────────────────────────────────────────────────
+// Remove screens that never got paired (spam / abandoned) and cap the event log.
+async function housekeeping() {
+  try {
+    const stale = await fdb.pruneStalePendingScreens(new Date(Date.now() - 24 * 3600 * 1000).toISOString());
+    const events = await fdb.pruneEvents(5000);
+    if (stale || events) console.log(`🧹  Housekeeping: ${stale} unpaired screen(s), ${events} old event(s) removed.`);
+  } catch (err) {
+    console.error('Housekeeping error:', err);
+  }
+}
+
 // ─── Startup ─────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 
 async function start() {
   console.log('🔥  Connecting to SQLite Database...');
   await initDb();
+  await housekeeping();
+  setInterval(housekeeping, 60 * 60 * 1000).unref();
+
+  if ((await fdb.count('users')) === 0) {
+    console.warn('⚠️  Aucun compte administrateur : le PREMIER compte créé devient administrateur.');
+    console.warn(process.env.SETUP_TOKEN
+      ? '    Un code d\'installation (SETUP_TOKEN) est exigé pour le créer.'
+      : '    Créez-le tout de suite, ou définissez SETUP_TOKEN si le serveur est accessible depuis Internet.');
+  }
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log('');

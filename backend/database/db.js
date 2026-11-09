@@ -1,10 +1,36 @@
 const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
-const fs = require('fs');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
+const { DB_PATH } = require('../config/paths');
 
-const dbPath = path.join(__dirname, 'signage.db');
-const db = new sqlite3.Database(dbPath);
+const db = new sqlite3.Database(DB_PATH);
+
+// ─── Identifier safety ──────────────────────────────────────────────────────
+// Table and column names are interpolated into SQL (values are always bound
+// parameters), so they are strictly validated to make injection impossible.
+const TABLES = new Set([
+  'users', 'settings', 'media', 'playlists', 'screens', 'events', 'licenseKeys', 'keyRedemptions',
+]);
+const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const OPS = new Set(['=', '<', '>', '<=', '>=', '!=']);
+
+function table(name) {
+  if (!TABLES.has(name)) throw new Error(`Invalid table: ${name}`);
+  return name;
+}
+function col(name) {
+  if (!IDENT.test(name)) throw new Error(`Invalid column: ${name}`);
+  return name;
+}
+function op(o) {
+  const v = o || '=';
+  if (!OPS.has(v)) throw new Error(`Invalid operator: ${v}`);
+  return v;
+}
+function newId() {
+  return crypto.randomBytes(9).toString('base64url');
+}
 
 // Helper function to run DB operations as Promises
 const query = {
@@ -37,7 +63,7 @@ const query = {
 // SQLite helper implementation mimicking the firestore helpers
 const firestoreHelpers = {
   async getById(collection, id) {
-    const row = await query.get(`SELECT * FROM ${collection} WHERE id = ?`, [String(id)]);
+    const row = await query.get(`SELECT * FROM ${table(collection)} WHERE id = ?`, [String(id)]);
     if (!row) return null;
     if (collection === 'playlists' && row.items) {
       try {
@@ -50,12 +76,12 @@ const firestoreHelpers = {
   },
 
   async getWhere(collection, filters = []) {
-    let sql = `SELECT * FROM ${collection}`;
+    let sql = `SELECT * FROM ${table(collection)}`;
     const params = [];
     if (filters.length > 0) {
       const clause = filters.map(f => {
         params.push(f.value);
-        return `${f.field} ${f.op || '='} ?`;
+        return `${col(f.field)} ${op(f.op)} ?`;
       }).join(' AND ');
       sql += ` WHERE ${clause}`;
     }
@@ -73,20 +99,20 @@ const firestoreHelpers = {
   },
 
   async getAll(collection, filters = [], options = {}) {
-    let sql = `SELECT * FROM ${collection}`;
+    let sql = `SELECT * FROM ${table(collection)}`;
     const params = [];
     if (filters.length > 0) {
       const clause = filters.map(f => {
         params.push(f.value);
-        return `${f.field} ${f.op || '='} ?`;
+        return `${col(f.field)} ${op(f.op)} ?`;
       }).join(' AND ');
       sql += ` WHERE ${clause}`;
     }
     if (options.orderBy) {
-      sql += ` ORDER BY ${options.orderBy} ${options.orderDir || 'ASC'}`;
+      sql += ` ORDER BY ${col(options.orderBy)} ${String(options.orderDir).toUpperCase() === 'DESC' ? 'DESC' : 'ASC'}`;
     }
     if (options.limit) {
-      sql += ` LIMIT ${options.limit}`;
+      sql += ` LIMIT ${parseInt(options.limit, 10) || 100}`;
     }
     const rows = await query.all(sql, params);
     return rows.map(row => {
@@ -102,7 +128,7 @@ const firestoreHelpers = {
   },
 
   async add(collection, data) {
-    const id = data.id || Math.random().toString(36).substr(2, 9);
+    const id = data.id || newId();
     const finalData = { ...data, id };
     
     const now = new Date().toISOString();
@@ -117,16 +143,16 @@ const firestoreHelpers = {
       finalData.items = JSON.stringify(finalData.items);
     }
 
-    const keys = Object.keys(finalData);
+    const keys = Object.keys(finalData).map(col);
     const placeholders = keys.map(() => '?').join(', ');
     const values = keys.map(k => finalData[k]);
 
-    await query.run(`INSERT INTO ${collection} (${keys.join(', ')}) VALUES (${placeholders})`, values);
+    await query.run(`INSERT INTO ${table(collection)} (${keys.join(', ')}) VALUES (${placeholders})`, values);
     return id;
   },
 
   async set(collection, id, data) {
-    const exists = await query.get(`SELECT 1 FROM ${collection} WHERE id = ?`, [String(id)]);
+    const exists = await query.get(`SELECT 1 FROM ${table(collection)} WHERE id = ?`, [String(id)]);
     if (exists) {
       await this.update(collection, id, data);
     } else {
@@ -141,7 +167,7 @@ const firestoreHelpers = {
       finalData.items = JSON.stringify(finalData.items);
     }
 
-    const keys = Object.keys(finalData).filter(k => k !== 'id');
+    const keys = Object.keys(finalData).filter(k => k !== 'id').map(col);
     if (keys.length === 0) return;
 
     const values = [];
@@ -158,24 +184,70 @@ const firestoreHelpers = {
 
     values.push(String(id));
 
-    await query.run(`UPDATE ${collection} SET ${clause} WHERE id = ?`, values);
+    await query.run(`UPDATE ${table(collection)} SET ${clause} WHERE id = ?`, values);
   },
 
   async delete(collection, id) {
-    await query.run(`DELETE FROM ${collection} WHERE id = ?`, [String(id)]);
+    await query.run(`DELETE FROM ${table(collection)} WHERE id = ?`, [String(id)]);
   },
 
   async deleteWhere(collection, filters = []) {
-    let sql = `DELETE FROM ${collection}`;
+    let sql = `DELETE FROM ${table(collection)}`;
     const params = [];
     if (filters.length > 0) {
       const clause = filters.map(f => {
         params.push(f.value);
-        return `${f.field} ${f.op || '='} ?`;
+        return `${col(f.field)} ${op(f.op)} ?`;
       }).join(' AND ');
       sql += ` WHERE ${clause}`;
     }
     await query.run(sql, params);
+  },
+
+  /** Screens waiting to be paired (not associated yet). */
+  async countPendingScreens() {
+    const row = await query.get('SELECT COUNT(*) AS n FROM screens WHERE is_associated IS NULL OR is_associated = 0');
+    return row ? row.n : 0;
+  },
+
+  async sumMediaSize() {
+    const row = await query.get('SELECT COALESCE(SUM(size), 0) AS total FROM media');
+    return row ? row.total : 0;
+  },
+
+  /** Housekeeping: drop never-paired screens inactive since `cutoffIso`, and old log rows. */
+  async pruneStalePendingScreens(cutoffIso) {
+    const r = await query.run(
+      'DELETE FROM screens WHERE (is_associated IS NULL OR is_associated = 0) AND COALESCE(last_activity, created_at, \'\') < ?',
+      [cutoffIso]
+    );
+    return r.changes;
+  },
+
+  async pruneEvents(keep = 5000) {
+    const r = await query.run(
+      'DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY COALESCE(timestamp, created_at) DESC LIMIT ?)',
+      [keep]
+    );
+    return r.changes;
+  },
+
+  async count(collection) {
+    const row = await query.get(`SELECT COUNT(*) AS n FROM ${table(collection)}`);
+    return row ? row.n : 0;
+  },
+
+  /** Atomically consume one use of a license key. Returns true only if a use was available. */
+  async claimLicenseUse(id) {
+    const r = await query.run(
+      'UPDATE licenseKeys SET uses_count = COALESCE(uses_count, 0) + 1 WHERE id = ? AND COALESCE(uses_count, 0) < max_uses',
+      [String(id)]
+    );
+    return r.changes === 1;
+  },
+
+  async releaseLicenseUse(id) {
+    await query.run('UPDATE licenseKeys SET uses_count = MAX(COALESCE(uses_count, 0) - 1, 0) WHERE id = ?', [String(id)]);
   },
 
   increment(value = 1) {
@@ -320,30 +392,36 @@ async function initDb() {
       );
     }
 
-    // Seed default admin
-    const adminExist = await query.get("SELECT 1 FROM users WHERE email = 'admin@magasin.local'");
-    if (!adminExist) {
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-      const userId = Math.random().toString(36).substr(2, 9);
-      await query.run(
-        "INSERT INTO users (id, email, password, name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        [userId, 'admin@magasin.local', hashedPassword, 'Admin', 'user', new Date().toISOString()]
-      );
-      console.log('Database seeded: admin@magasin.local / admin123 created.');
+    // Security migrations
+    await addColumnIfNotExists('users', 'token_version', 'INTEGER DEFAULT 0');
+    await addColumnIfNotExists('users', 'must_change_password', 'INTEGER DEFAULT 0');
+    await addColumnIfNotExists('screens', 'token_hash', 'TEXT');
+    await query.run(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_key_redemptions_unique ON keyRedemptions(key_id, user_id)'
+    );
+
+    // No default accounts are created any more: the first account registered on a fresh
+    // install becomes the administrator (see authController.register).
+    // Installations created by older versions may still hold the public default accounts:
+    // keep them, but force a password change and invalidate their sessions.
+    const LEGACY_DEFAULTS = [
+      ['admin@magasin.local', 'admin123'],
+      ['hugu@imagescreen.local', '1234'],
+    ];
+    for (const [email, pwd] of LEGACY_DEFAULTS) {
+      const u = await query.get('SELECT id, password, must_change_password FROM users WHERE email = ?', [email]);
+      if (u && !u.must_change_password && u.password && (await bcrypt.compare(pwd, u.password))) {
+        await query.run(
+          'UPDATE users SET must_change_password = 1, token_version = COALESCE(token_version, 0) + 1 WHERE id = ?',
+          [u.id]
+        );
+        console.warn(`⚠️  Account ${email} still uses a publicly known default password: a password change is now required.`);
+      }
     }
 
-    // Seed super admin Hugu
-    const huguExist = await query.get("SELECT 1 FROM users WHERE email = 'hugu@imagescreen.local'");
-    if (!huguExist) {
-      const hashedPassword = await bcrypt.hash('1234', 10);
-      const userId = Math.random().toString(36).substr(2, 9);
-      await query.run(
-        "INSERT INTO users (id, email, password, name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        [userId, 'hugu@imagescreen.local', hashedPassword, 'Hugu', 'admin', new Date().toISOString()]
-      );
-      console.log('Database seeded: hugu@imagescreen.local / 1234 (admin) created.');
-    } else {
-      await query.run("UPDATE users SET role = 'admin', name = 'Hugu' WHERE email = 'hugu@imagescreen.local'");
+    // The database holds password hashes: keep it private even if it pre-dates the umask
+    for (const suffix of ['', '-journal', '-wal', '-shm']) {
+      try { fs.chmodSync(DB_PATH + suffix, 0o600); } catch { /* file may not exist */ }
     }
 
     console.log('✅  SQLite Database successfully initialized.');
