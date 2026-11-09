@@ -12,13 +12,15 @@ import { Brand } from '../components/ui/Logo';
 import { ThemeToggleButton } from '../components/ui/ThemeSwitch';
 
 export default function Login() {
-  const { login, register, isAuthenticated, mustChangePassword } = useAuth();
+  const { login, register, isAuthenticated, mustChangePassword, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   // Where to go after signing in (set by the route guard); only in-app paths are accepted
   const requested = location.state?.from;
-  const destination = typeof requested === 'string' && /^\/(?![/\\])/.test(requested) ? requested : '/dashboard';
+  // A super-admin manages accounts; everyone else starts on the dashboard
+  const home = user?.role === 'superadmin' ? '/comptes' : '/dashboard';
+  const destination = typeof requested === 'string' && /^\/(?![/\\])/.test(requested) ? requested : home;
   const store = useStoreSettings();
 
   const [mode, setMode] = useState(searchParams.get('mode') === 'register' ? 'register' : 'login');

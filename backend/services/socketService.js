@@ -94,6 +94,8 @@ async function authenticate(socket, next) {
       if (!user || user.must_change_password) return next(new Error('unauthorized'));
       socket.data.role = 'admin';
       socket.data.userId = user.id;
+      socket.data.userRole = user.role;
+      socket.data.storeId = user.store_id || null;
       return next();
     }
 
@@ -142,7 +144,8 @@ function init(server, allowedOrigins = null) {
     throttleSocketEvents(socket);
 
     if (socket.data.role === 'admin') {
-      socket.join('admins');
+      if (socket.data.storeId) socket.join(storeRoom(socket.data.storeId));
+      if (socket.data.userRole === 'superadmin') socket.join('superadmins');
       console.log(`Admin connected: ${socket.id}`);
     } else if (socket.data.role === 'screen') {
       const screenId = socket.data.screenId;
@@ -202,7 +205,7 @@ function init(server, allowedOrigins = null) {
           });
         }
 
-        broadcastScreenListUpdate();
+        if (existing && existing.store_id) broadcastScreenListUpdate(existing.store_id);
 
         // Tell the screen its authoritative state, so it resumes after a reboot / reconnection
         // (or goes back to showing its pairing code if it was dissociated in the meantime).
@@ -249,9 +252,11 @@ function init(server, allowedOrigins = null) {
     });
 
     // Screen reports its current slide for Live Preview
-    socket.on('screen:preview_slide', (data) => {
+    socket.on('screen:preview_slide', async (data) => {
       if (socket.data.role !== 'screen' || !data || typeof data !== 'object') return;
-      io.to('admins').emit(`screen:preview:${socket.data.screenId}`, {
+      const screen = await fdb.getById('screens', socket.data.screenId).catch(() => null);
+      if (!screen || !screen.store_id) return;
+      emitToStore(screen.store_id, `screen:preview:${socket.data.screenId}`, {
         mediaId: data.mediaId == null ? null : String(data.mediaId).slice(0, 64),
         index: num(data.index, 100000),
         total: num(data.total, 100000),
@@ -314,10 +319,29 @@ async function handleScreenConnection(screenId, socket) {
   }
 }
 
-async function broadcastScreenListUpdate() {
+/** Room of one store: every admin and user of that store is in it, nobody else. */
+function storeRoom(storeId) {
+  return `store:${storeId}`;
+}
+
+/** Sends to a store's room, or to the super-admins when there is no store (system events). */
+function emitToStore(storeId, event, payload) {
   if (!io) return;
+  io.to(storeId ? storeRoom(storeId) : 'superadmins').emit(event, payload);
+}
+
+/** Forces every open socket of a user (e.g. when the account is disabled or deleted) to close. */
+function disconnectUser(userId) {
+  if (!io) return;
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data && socket.data.userId === userId) socket.disconnect(true);
+  }
+}
+
+async function broadcastScreenListUpdate(storeId) {
+  if (!io || !storeId) return;
   try {
-    const screens = await fdb.getAll('screens', [], { orderBy: 'last_activity', orderDir: 'desc' });
+    const screens = await fdb.getAll('screens', [{ field: 'store_id', value: storeId }], { orderBy: 'last_activity', orderDir: 'desc' });
 
     // Résoudre les noms de playlists
     const result = await Promise.all(screens.map(async (screen) => {
@@ -329,31 +353,44 @@ async function broadcastScreenListUpdate() {
       return { ...publicScreen(screen), playlist_name };
     }));
 
-    io.to('admins').emit('screens:list', result);
+    emitToStore(storeId, 'screens:list', result);
   } catch (err) {
     console.error(err);
   }
 }
 
-function broadcastScreenStatus(screenId, status) {
-  if (io) {
-    io.to('admins').emit('screen:status_update', { id: screenId, status });
+async function broadcastScreenStatus(screenId, status) {
+  if (!io) return;
+  try {
+    const screen = await fdb.getById('screens', screenId);
+    emitToStore(screen ? screen.store_id : null, 'screen:status_update', { id: screenId, status });
+  } catch (err) {
+    console.error('Failed to broadcast screen status:', err);
   }
 }
 
-async function logEvent(screenId, eventType, message) {
+/**
+ * Journal entry. The store is either given explicitly or taken from the screen concerned.
+ * Entries with no store (pairing of a new screen, super-admin actions) are only shown to super-admins.
+ */
+async function logEvent(screenId, eventType, message, storeId) {
   try {
+    let store = storeId === undefined ? null : storeId;
+    if (!store && screenId) {
+      const screen = await fdb.getById('screens', screenId);
+      store = screen ? screen.store_id || null : null;
+    }
+
     const newId = await fdb.add('events', {
       screen_id: screenId,
       event_type: eventType,
       message,
-      timestamp: fdb.serverTimestamp()
+      timestamp: fdb.serverTimestamp(),
+      store_id: store || null,
     });
 
-    if (io) {
-      const event = await fdb.getById('events', newId);
-      io.to('admins').emit('event:new', event);
-    }
+    const event = await fdb.getById('events', newId);
+    emitToStore(store || null, 'event:new', event);
   } catch (err) {
     console.error('Failed to log event:', err);
   }
@@ -388,5 +425,8 @@ module.exports = {
   notifyScreenAssociation,
   forceScreenSync,
   logEvent,
-  broadcastScreenListUpdate
+  broadcastScreenListUpdate,
+  broadcastScreenStatus,
+  disconnectUser,
+  storeRoom,
 };

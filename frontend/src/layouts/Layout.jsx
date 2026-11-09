@@ -24,6 +24,7 @@ import { Badge } from '../components/ui/Badge';
 import { DropdownMenu, MenuItem, MenuLabel, MenuSeparator } from '../components/ui/Menu';
 import { ThemeSwitch, ThemeToggleButton } from '../components/ui/ThemeSwitch';
 import { cn } from '../utils/cn';
+import { Store, Users } from 'lucide-react';
 
 const NAV = [
   { to: '/dashboard', label: 'Tableau de bord', short: 'Accueil', icon: LayoutDashboard },
@@ -102,7 +103,7 @@ function ConnectionPill({ connected, compact }) {
   );
 }
 
-function UserMenu({ user, isAdmin, onLogout }) {
+function UserMenu({ user, isSuperAdmin, isStoreAdmin, onLogout }) {
   const display = user?.name || user?.email || 'Utilisateur';
   return (
     <DropdownMenu
@@ -124,12 +125,12 @@ function UserMenu({ user, isAdmin, onLogout }) {
         <div className="min-w-0">
           <p className="truncate text-sm font-bold">{display}</p>
           <p className="truncate text-xs text-muted">{user?.email}</p>
-          <Badge tone={isAdmin ? 'accent' : 'neutral'} className="mt-1.5">{isAdmin ? 'Administrateur' : 'Utilisateur'}</Badge>
+          <Badge tone={isSuperAdmin || isStoreAdmin ? 'accent' : 'neutral'} className="mt-1.5">{isSuperAdmin ? 'Super-administrateur' : isStoreAdmin ? 'Administrateur du magasin' : 'Utilisateur'}</Badge>
         </div>
       </div>
       <MenuSeparator />
       <MenuItem icon={SettingsIcon} to="/settings">Paramètres</MenuItem>
-      {isAdmin && <MenuItem icon={ShieldCheck} to="/admin">Administration</MenuItem>}
+      {isSuperAdmin && <MenuItem icon={ShieldCheck} to="/admin">Administration</MenuItem>}
       <MenuSeparator />
       <MenuLabel>Apparence</MenuLabel>
       <div className="px-2 pb-2">
@@ -146,10 +147,15 @@ function UserMenu({ user, isAdmin, onLogout }) {
  * Rendered once for all admin pages (nested routes), so navigation never remounts it.
  */
 export default function AppShell() {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isSuperAdmin, isStoreAdmin } = useAuth();
   const store = useStoreSettings();
   const location = useLocation();
   const navigate = useNavigate();
+
+  // Mobile dock: a super-admin only manages stores and accounts; a store admin also gets the accounts page
+  const dockItems = isSuperAdmin
+    ? [{ to: '/comptes', label: 'Magasins', short: 'Magasins', icon: Store }, NAV[4]]
+    : isStoreAdmin ? [...NAV, { to: '/comptes', label: 'Comptes', short: 'Comptes', icon: Users }] : NAV;
 
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem('sidebar_collapsed') === '1'; } catch { return false; }
@@ -210,13 +216,16 @@ export default function AppShell() {
 
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-5" aria-label="Navigation principale">
           {!collapsed && <p className="eyebrow mb-2 px-3">Gestion</p>}
-          {NAV.slice(0, 4).map((n) => (
+          {!isSuperAdmin && NAV.slice(0, 4).map((n) => (
             <SideLink key={n.to} {...n} active={isActive(n.to)} collapsed={collapsed} badge={n.to === '/screens' ? pending : 0} />
           ))}
           <div className="py-2"><div className="divider" /></div>
           {!collapsed && <p className="eyebrow mb-2 px-3">Système</p>}
           <SideLink {...NAV[4]} active={isActive(NAV[4].to)} collapsed={collapsed} />
-          {isAdmin && <SideLink to="/admin" icon={ShieldCheck} label="Administration" active={isActive('/admin')} collapsed={collapsed} />}
+          {(isSuperAdmin || isStoreAdmin) && (
+            <SideLink to="/comptes" icon={isSuperAdmin ? Store : Users} label={isSuperAdmin ? 'Magasins' : 'Comptes'} active={isActive('/comptes')} collapsed={collapsed} />
+          )}
+          {isSuperAdmin && <SideLink to="/admin" icon={ShieldCheck} label="Administration" active={isActive('/admin')} collapsed={collapsed} />}
         </nav>
 
         <div className="space-y-3 border-t border-line p-3">
@@ -264,7 +273,7 @@ export default function AppShell() {
           <div className="flex items-center gap-1.5 sm:gap-2.5">
             <ConnectionPill connected={connected} compact={false} />
             <ThemeToggleButton className="hidden sm:grid" />
-            <UserMenu user={user} isAdmin={isAdmin} onLogout={handleLogout} />
+            <UserMenu user={user} isSuperAdmin={isSuperAdmin} isStoreAdmin={isStoreAdmin} onLogout={handleLogout} />
           </div>
         </header>
 
@@ -282,7 +291,7 @@ export default function AppShell() {
         aria-label="Navigation principale"
         className="glass fixed inset-x-3 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-40 grid grid-cols-5 rounded-3xl border border-line p-1.5 shadow-pop lg:hidden"
       >
-        {NAV.map((n) => (
+        {dockItems.map((n) => (
           <Link
             key={n.to}
             to={n.to}

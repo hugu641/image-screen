@@ -32,15 +32,16 @@ async function uploadMedia(req, res) {
     const uploadedItems = [];
 
     try {
-      const uploadsDir = UPLOADS_DIR;
+      // One folder per store: uploads/<storeId>/ (the library and the files are never shared)
+      const uploadsDir = path.join(UPLOADS_DIR, req.user.storeId);
       if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
+        fs.mkdirSync(uploadsDir, { recursive: true, mode: 0o700 });
       }
 
       // Storage quota (disk-filling protection)
       const maxBytes = (Number(process.env.MAX_STORAGE_MB) || 20480) * 1024 * 1024;
       const incoming = req.files.reduce((n, f) => n + f.size, 0);
-      if ((await fdb.sumMediaSize()) + incoming > maxBytes) {
+      if ((await fdb.sumMediaSize(req.user.storeId)) + incoming > maxBytes) {
         return res.status(413).json({ error: "Espace de stockage plein. Supprimez des médias avant d'en ajouter." });
       }
 
@@ -83,20 +84,21 @@ async function uploadMedia(req, res) {
         await fs.promises.writeFile(uploadPath, buffer, { mode: 0o644 });
 
         // Enregistrer en SQLite (filepath = chemin relatif /uploads/...)
-        const publicUrl = `/uploads/${filename}`;
+        const publicUrl = `/uploads/${req.user.storeId}/${filename}`;
         const displayName = sanitizeDisplayName(file.originalname);
         const mediaId = await fdb.add('media', {
           filename,
           original_name: displayName,
           mime_type: mime,
           size,
-          filepath: publicUrl
+          filepath: publicUrl,
+          store_id: req.user.storeId,
         });
 
         const newMedia = await fdb.getById('media', mediaId);
         uploadedItems.push(newMedia);
 
-        await logEvent(null, 'info', `Média ajouté : ${displayName}`);
+        await logEvent(null, 'info', `Média ajouté : ${displayName}`, req.user.storeId);
       }
 
       res.status(201).json({
@@ -113,7 +115,7 @@ async function uploadMedia(req, res) {
 // Storage used vs. the configured quota (MAX_STORAGE_MB), for the usage gauge in the UI
 async function mediaUsage(req, res) {
   try {
-    const used = await fdb.sumMediaSize();
+    const used = await fdb.sumMediaSize(req.user.storeId);
     const max = (Number(process.env.MAX_STORAGE_MB) || 20480) * 1024 * 1024;
     res.json({ used, max });
   } catch (error) {
@@ -133,7 +135,7 @@ async function listMedia(req, res) {
     else if (sort === 'name_asc') { orderField = 'original_name'; orderDir = 'asc'; }
     else if (sort === 'name_desc') { orderField = 'original_name'; orderDir = 'desc'; }
 
-    let mediaList = await fdb.getAll('media', [], { orderBy: orderField, orderDir });
+    let mediaList = await fdb.getAll('media', [{ field: 'store_id', value: req.user.storeId }], { orderBy: orderField, orderDir });
 
     if (search) {
       const searchLower = search.toLowerCase();
@@ -154,12 +156,17 @@ async function deleteMedia(req, res) {
 
   try {
     const media = await fdb.getById('media', id);
-    if (!media) {
+    if (!media || media.store_id !== req.user.storeId) {
       return res.status(404).json({ error: 'Média introuvable.' });
     }
 
     // Supprimer du disque local
-    const filePath = path.join(UPLOADS_DIR, path.basename(String(media.filename)));
+    // filepath is "/uploads/<storeId>/<file>" (or "/uploads/<file>" for files from before the split)
+    const relative = String(media.filepath || '').replace(/^\/uploads\//, '');
+    const filePath = path.resolve(UPLOADS_DIR, relative);
+    if (!filePath.startsWith(path.resolve(UPLOADS_DIR) + path.sep)) {
+      return res.status(500).json({ error: 'Chemin de fichier invalide.' });
+    }
     try {
       if (fs.existsSync(filePath)) {
         await fs.promises.unlink(filePath);
@@ -170,7 +177,7 @@ async function deleteMedia(req, res) {
 
     // Supprimer de la base SQLite
     await fdb.delete('media', id);
-    await logEvent(null, 'info', `Média supprimé : ${media.original_name}`);
+    await logEvent(null, 'info', `Média supprimé : ${media.original_name}`, req.user.storeId);
 
     res.json({ message: 'Média supprimé avec succès.' });
   } catch (error) {
@@ -189,7 +196,7 @@ async function renameMedia(req, res) {
 
   try {
     const media = await fdb.getById('media', id);
-    if (!media) {
+    if (!media || media.store_id !== req.user.storeId) {
       return res.status(404).json({ error: 'Média introuvable.' });
     }
 

@@ -57,4 +57,27 @@ async function api(base, method, url, body, token, extraHeaders = {}) {
   return { status: res.status, data, headers: res.headers };
 }
 
-module.exports = { startServer, api };
+const INITIAL_PASSWORD = 'temporary-pass-1234';
+const STORE_PASSWORD = 'store-admin-passphrase';
+
+/**
+ * Creates a store admin with the super-admin token, then completes its first mandatory
+ * password change. Returns the store admin's token, account id and store id.
+ */
+async function storeAdminToken(base, superToken, email = 'magasin@shop.fr', storeName = 'Boutique test') {
+  const created = await api(base, 'POST', '/admin/stores',
+    { storeName, email, name: 'Gérant', password: INITIAL_PASSWORD }, superToken);
+  if (created.status !== 201) throw new Error('store admin not created: ' + JSON.stringify(created.data));
+  const login = await api(base, 'POST', '/auth/login', { email, password: INITIAL_PASSWORD });
+  const change = await api(base, 'PUT', '/auth/update-password',
+    { currentPassword: INITIAL_PASSWORD, newPassword: STORE_PASSWORD }, login.data.token);
+  if (change.status !== 200) throw new Error('password change failed: ' + JSON.stringify(change.data));
+  return {
+    token: change.data.token,
+    accountId: created.data.account.id,
+    storeId: created.data.store.id,
+    email,
+  };
+}
+
+module.exports = { startServer, api, storeAdminToken, INITIAL_PASSWORD, STORE_PASSWORD };

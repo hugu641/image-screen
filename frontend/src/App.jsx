@@ -21,6 +21,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const TVPlayer = lazy(() => import('./pages/TVPlayer'));
 const LivePreview = lazy(() => import('./pages/LivePreview'));
 const AdminPanel = lazy(() => import('./pages/AdminPanel'));
+const Accounts = lazy(() => import('./pages/Accounts'));
 const ServerSetup = lazy(() => import('./pages/ServerSetup'));
 
 const APP_MODE = import.meta.env.VITE_APP_MODE || 'web';
@@ -65,9 +66,9 @@ function RequireAuth() {
   return <AppShell />;
 }
 
-function RequireAdmin() {
-  const { isAdmin } = useAuth();
-  return isAdmin ? <Outlet /> : <Navigate to="/dashboard" replace />;
+function RequireSuperAdmin() {
+  const { isSuperAdmin } = useAuth();
+  return isSuperAdmin ? <Outlet /> : <Navigate to="/dashboard" replace />;
 }
 
 export default function App() {
@@ -97,8 +98,9 @@ export default function App() {
                       <Route path="/playlists" element={<Playlists />} />
                       <Route path="/media" element={<MediaLibrary />} />
                       <Route path="/settings" element={<Settings />} />
+                      <Route path="/comptes" element={<Accounts />} />
                       <Route path="/admin/preview/:id" element={<LivePreview />} />
-                      <Route element={<RequireAdmin />}>
+                      <Route element={<RequireSuperAdmin />}>
                         <Route path="/admin" element={<AdminPanel />} />
                       </Route>
                     </Route>

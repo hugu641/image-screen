@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const { io } = require('socket.io-client');
-const { startServer, api } = require('./helpers');
+const { startServer, api, storeAdminToken } = require('./helpers');
 
 const PNG_1x1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -44,7 +44,8 @@ test('error handling, caching and file permissions', async (t) => {
   const srv = await startServer();
   t.after(() => srv.stop());
   const reg = await api(srv.base, 'POST', '/auth/register', { email: 'boss@shop.fr', password: PASSWORD });
-  const token = reg.data.token;
+  const token = reg.data.token; // super-admin
+  const store = await storeAdminToken(srv.base, token);
 
   await t.test('malformed JSON returns a clean JSON error (no stack trace, no HTML)', async () => {
     const r = await rawRequest(srv.port, 'POST', '/api/auth/login', { 'Content-Type': 'application/json' }, '{bad json');
@@ -60,7 +61,7 @@ test('error handling, caching and file permissions', async (t) => {
   });
 
   await t.test('API responses are never cacheable', async () => {
-    const r = await rawRequest(srv.port, 'GET', '/api/screens', { Authorization: 'Bearer ' + token });
+    const r = await rawRequest(srv.port, 'GET', '/api/screens', { Authorization: 'Bearer ' + store.token });
     assert.match(r.headers['cache-control'], /no-store/);
   });
 
@@ -72,15 +73,16 @@ test('error handling, caching and file permissions', async (t) => {
   });
 
   await t.test('media usage endpoint reports used and max bytes', async () => {
-    const r = await api(srv.base, 'GET', '/media/usage', null, token);
+    const r = await api(srv.base, 'GET', '/media/usage', null, store.token);
     assert.equal(r.status, 200);
     assert.equal(r.data.used, 0);
     assert.ok(r.data.max > 0);
     assert.equal((await api(srv.base, 'GET', '/media/usage')).status, 401);
+    assert.equal((await api(srv.base, 'GET', '/media/usage', null, token)).status, 403, 'super-admin has no store content');
   });
 
   await t.test('events limit is clamped', async () => {
-    const r = await api(srv.base, 'GET', '/events?limit=999999999', null, token);
+    const r = await api(srv.base, 'GET', '/events?limit=999999999', null, store.token);
     assert.equal(r.status, 200);
     assert.ok(r.data.length <= 500);
   });
@@ -96,36 +98,35 @@ test('anonymous screens cannot flood the server', async (t) => {
   await t.test('per-IP limit on new screens', async (t2) => {
     const srv = await startServer({ NEW_SCREENS_PER_HOUR: '5' });
     t2.after(() => srv.stop());
-    const reg = await api(srv.base, 'POST', '/auth/register', { email: 'boss@shop.fr', password: PASSWORD });
     const socks = [];
+    let dropped = 0;
     for (let i = 0; i < 25; i++) {
       const c = await connectScreen(srv.base);
-      if (c) { c.socket.emit('screen:register', { id: c.id, code: pairingCode(), name: 'spam' }); socks.push(c.socket); }
+      if (!c) continue;
+      c.socket.on('disconnect', () => dropped++);
+      c.socket.emit('screen:register', { id: c.id, code: pairingCode(), name: 'spam' });
+      socks.push(c.socket);
     }
     await sleep(1500);
-    const list = await api(srv.base, 'GET', '/screens', null, reg.data.token);
-    assert.ok(list.data.length <= 5, `expected <= 5 screens, got ${list.data.length}`);
+    assert.ok(dropped >= 20, `expected >= 20 refused, got ${dropped}`);
     socks.forEach((s) => s.close());
   });
 
   await t.test('global cap on unpaired screens', async (t2) => {
     const srv = await startServer({ MAX_PENDING_SCREENS: '3', NEW_SCREENS_PER_HOUR: '1000' });
     t2.after(() => srv.stop());
-    const reg = await api(srv.base, 'POST', '/auth/register', { email: 'boss@shop.fr', password: PASSWORD });
     const socks = [];
-    let refused = 0;
+    let dropped = 0;
     for (let i = 0; i < 10; i++) {
       const c = await connectScreen(srv.base);
       if (!c) continue;
-      c.socket.on('screen:error', () => refused++);
+      c.socket.on('disconnect', () => dropped++);
       c.socket.emit('screen:register', { id: c.id, code: pairingCode(), name: 'spam' });
       socks.push(c.socket);
       await sleep(80);
     }
     await sleep(800);
-    const list = await api(srv.base, 'GET', '/screens', null, reg.data.token);
-    assert.equal(list.data.length, 3);
-    assert.ok(refused >= 7, `refused ${refused}`);
+    assert.equal(dropped, 7, `3 screens accepted, 7 refused; refused ${dropped}`);
     socks.forEach((s) => s.close());
   });
 
@@ -176,17 +177,18 @@ test('first admin account can be protected by SETUP_TOKEN', async (t) => {
   assert.equal((await api(srv.base, 'POST', '/auth/register', { ...body, setupToken: 'wrong' })).status, 403);
   const ok = await api(srv.base, 'POST', '/auth/register', { ...body, setupToken: 'my-install-code-123' });
   assert.equal(ok.status, 201);
-  assert.equal(ok.data.user.role, 'admin');
+  assert.equal(ok.data.user.role, 'superadmin');
 });
 
 test('storage quota is enforced', async (t) => {
   const srv = await startServer({ MAX_STORAGE_MB: '0.00012' }); // ~125 bytes
   t.after(() => srv.stop());
   const reg = await api(srv.base, 'POST', '/auth/register', { email: 'boss@shop.fr', password: PASSWORD });
+  const store = await storeAdminToken(srv.base, reg.data.token);
   const upload = () => {
     const fd = new FormData();
     fd.append('files', new Blob([PNG_1x1]), 'a.png');
-    return api(srv.base, 'POST', '/media/upload', fd, reg.data.token);
+    return api(srv.base, 'POST', '/media/upload', fd, store.token);
   };
   assert.equal((await upload()).status, 201);
   assert.equal((await upload()).status, 413);
