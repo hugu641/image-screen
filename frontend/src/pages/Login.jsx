@@ -172,6 +172,11 @@ export default function Login() {
               <Button type="submit" variant="primary" size="lg" className="mt-2 w-full" loading={busy} icon={isRegister ? ShieldCheck : undefined}>
                 {isRegister ? (status.needsSetup ? 'Créer le compte administrateur' : 'Créer mon compte') : 'Se connecter'}
               </Button>
+              {!isRegister && status.mailEnabled && (
+                <p className="text-center text-[13px]">
+                  <Link to="/mot-de-passe-oublie" className="font-semibold text-primary hover:underline">Mot de passe oublié ?</Link>
+                </p>
+              )}
             </form>
 
             {!status.registrationOpen && (
