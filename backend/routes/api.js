@@ -105,6 +105,9 @@ router.post('/screens/:id/sync', authController.authMiddleware, requireStore, sc
 router.get('/settings', settingsController.getSettings);
 router.put('/settings', authController.authMiddleware, requireStoreAdmin, settingsController.updateSettings);
 
+// User guide (PDF) for signed-in users
+router.get('/guide', authController.authMiddleware, passwordController.downloadGuide);
+
 // Event Logs Routes
 router.get('/events', authController.authMiddleware, requireStore, eventController.listEvents);
 
