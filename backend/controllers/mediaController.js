@@ -32,9 +32,10 @@ async function uploadMedia(req, res) {
     const uploadedItems = [];
 
     try {
-      const uploadsDir = UPLOADS_DIR;
+      // One folder per store: uploads/<storeId>/ (the library and the files are never shared)
+      const uploadsDir = path.join(UPLOADS_DIR, req.user.storeId);
       if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
+        fs.mkdirSync(uploadsDir, { recursive: true, mode: 0o700 });
       }
 
       // Storage quota (disk-filling protection)
@@ -83,7 +84,7 @@ async function uploadMedia(req, res) {
         await fs.promises.writeFile(uploadPath, buffer, { mode: 0o644 });
 
         // Enregistrer en SQLite (filepath = chemin relatif /uploads/...)
-        const publicUrl = `/uploads/${filename}`;
+        const publicUrl = `/uploads/${req.user.storeId}/${filename}`;
         const displayName = sanitizeDisplayName(file.originalname);
         const mediaId = await fdb.add('media', {
           filename,
@@ -160,7 +161,12 @@ async function deleteMedia(req, res) {
     }
 
     // Supprimer du disque local
-    const filePath = path.join(UPLOADS_DIR, path.basename(String(media.filename)));
+    // filepath is "/uploads/<storeId>/<file>" (or "/uploads/<file>" for files from before the split)
+    const relative = String(media.filepath || '').replace(/^\/uploads\//, '');
+    const filePath = path.resolve(UPLOADS_DIR, relative);
+    if (!filePath.startsWith(path.resolve(UPLOADS_DIR) + path.sep)) {
+      return res.status(500).json({ error: 'Chemin de fichier invalide.' });
+    }
     try {
       if (fs.existsSync(filePath)) {
         await fs.promises.unlink(filePath);

@@ -298,6 +298,9 @@ test('stores are isolated: a store only sees and changes its own data', async (t
   const media = await api(base, 'POST', '/media/upload', fd, A.token);
   assert.equal(media.status, 201, JSON.stringify(media.data));
   const mediaId = media.data.media[0].id;
+  // Files live in the store's own folder
+  assert.ok(media.data.media[0].filepath.startsWith(`/uploads/${A.storeId}/`), 'file stored in the store folder');
+  assert.equal((await fetch(base + media.data.media[0].filepath)).status, 200);
   const pl = await api(base, 'POST', '/playlists', { name: 'Playlist A', mediaIds: [mediaId] }, A.token);
   assert.equal(pl.status, 201);
 
