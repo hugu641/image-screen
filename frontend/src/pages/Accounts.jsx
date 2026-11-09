@@ -40,6 +40,9 @@ function StoresAdmin() {
   const [stores, setStores] = useState(null);
   const [form, setForm] = useState({ storeName: '', name: '', email: '', password: '' });
   const [busy, setBusy] = useState(false);
+  // Store that receives a new administrator (a store that has none yet, e.g. after migration)
+  const [addingTo, setAddingTo] = useState(null);
+  const [adminForm, setAdminForm] = useState({ name: '', email: '', password: '' });
 
   const reload = () => api.get('/admin/stores').then(setStores).catch((err) => toast.error(err.message || 'Chargement impossible.'));
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -55,6 +58,22 @@ function StoresAdmin() {
       reload();
     } catch (err) {
       toast.error(err.message || 'Création impossible.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addAdmin = async (e, store) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api.post('/admin/stores', { ...adminForm, storeId: store.id });
+      toast.success(`Administrateur ajouté à « ${store.name} ».`);
+      setAdminForm({ name: '', email: '', password: '' });
+      setAddingTo(null);
+      reload();
+    } catch (err) {
+      toast.error(err.message || 'Ajout impossible.');
     } finally {
       setBusy(false);
     }
@@ -103,7 +122,7 @@ function StoresAdmin() {
                 <p className="font-bold">{s.name}</p>
                 <Badge tone="neutral" icon={Users}>{s.userCount} utilisateur(s)</Badge>
               </div>
-              {s.admins.length === 0 && <p className="text-sm text-subtle">Aucun administrateur.</p>}
+              {s.admins.length === 0 && <p className="text-sm text-subtle">Aucun administrateur : ce magasin n'est accessible à personne.</p>}
               {s.admins.map((a) => (
                 <div key={a.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-surface-2/60 px-4 py-3">
                   <div className="min-w-0">
@@ -113,6 +132,25 @@ function StoresAdmin() {
                   <Switch checked={!a.disabled} onChange={(on) => toggle(a, on)} label={a.disabled ? 'Désactivé' : 'Actif'} />
                 </div>
               ))}
+              {addingTo === s.id ? (
+                <form onSubmit={(e) => addAdmin(e, s)} className="grid gap-4 rounded-xl border border-line p-4 sm:grid-cols-2">
+                  <Field label="Nom de l'administrateur">
+                    {(p) => <Input {...p} maxLength={100} value={adminForm.name} onChange={(e) => setAdminForm({ ...adminForm, name: e.target.value })} />}
+                  </Field>
+                  <Field label="Email de connexion" required>
+                    {(p) => <Input {...p} type="email" required value={adminForm.email} onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })} />}
+                  </Field>
+                  <PasswordField value={adminForm.password} onChange={(password) => setAdminForm({ ...adminForm, password })} />
+                  <div className="flex items-end justify-end gap-2 sm:col-span-2">
+                    <Button variant="ghost" onClick={() => setAddingTo(null)}>Annuler</Button>
+                    <Button type="submit" variant="primary" icon={UserPlus} loading={busy}>Ajouter</Button>
+                  </div>
+                </form>
+              ) : (
+                <Button variant="secondary" icon={UserPlus} onClick={() => { setAdminForm({ name: '', email: '', password: '' }); setAddingTo(s.id); }}>
+                  Ajouter un administrateur
+                </Button>
+              )}
             </div>
           ))}
         </div>
