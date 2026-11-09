@@ -78,7 +78,10 @@ export function AuthProvider({ children }) {
     logout,
     changePassword,
     isAuthenticated: !!user,
-    isAdmin: user?.role === 'admin',
+    isSuperAdmin: user?.role === 'superadmin',
+    isStoreAdmin: user?.role === 'storeadmin',
+    // store administration (store settings and user accounts)
+    isAdmin: user?.role === 'storeadmin',
     mustChangePassword: !!user?.mustChangePassword,
     role: user?.role || null,
   };

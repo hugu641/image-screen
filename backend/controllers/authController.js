@@ -29,10 +29,6 @@ function setupTokenMatches(candidate) {
   return expected.length > 0 && given.length === expected.length && crypto.timingSafeEqual(expected, given);
 }
 
-function registrationAllowedByConfig() {
-  return String(process.env.ALLOW_REGISTRATION || '').toLowerCase() === 'true';
-}
-
 function normalizeEmail(email) {
   return typeof email === 'string' ? email.trim().toLowerCase() : '';
 }
@@ -57,18 +53,20 @@ function publicUser(user) {
     email: user.email,
     name: user.name,
     role: user.role || 'user',
+    storeId: user.store_id || null,
     mustChangePassword: !!user.must_change_password,
   };
 }
 
-// Tells the login page whether to offer account creation
+// Tells the login page whether the first (super-admin) account still has to be created.
+// Afterwards accounts are only created by the super-admin and by store admins.
 async function status(req, res) {
   try {
     const total = await fdb.count('users');
     res.json({
       needsSetup: total === 0,
       needsSetupToken: total === 0 && setupTokenRequired(),
-      registrationOpen: total === 0 || registrationAllowedByConfig(),
+      registrationOpen: total === 0,
     });
   } catch (error) {
     console.error('Auth status error:', error);
@@ -76,8 +74,8 @@ async function status(req, res) {
   }
 }
 
-// Register a new user. First account on a fresh install = administrator; afterwards only
-// when ALLOW_REGISTRATION=true.
+// Public registration is only open for the very first account of a fresh install, which
+// becomes the super-admin. Every other account is created by an administrator (see accountController).
 async function register(req, res) {
   const email = normalizeEmail(req.body?.email);
   const { password } = req.body || {};
@@ -103,9 +101,9 @@ async function register(req, res) {
     if (isFirstUser && setupTokenRequired() && !setupTokenMatches(req.body?.setupToken)) {
       return res.status(403).json({ error: "Code d'installation invalide (variable SETUP_TOKEN du serveur)." });
     }
-    if (!isFirstUser && !registrationAllowedByConfig()) {
+    if (!isFirstUser) {
       return res.status(403).json({
-        error: "Les inscriptions sont fermées. Demandez un accès à l'administrateur.",
+        error: "Les inscriptions sont fermées. Demandez un compte à votre administrateur.",
       });
     }
 
@@ -115,12 +113,13 @@ async function register(req, res) {
     }
 
     const hashedPassword = await bcrypt.hash(password, BCRYPT_COST);
-    const role = isFirstUser ? 'admin' : 'user';
     const newId = await fdb.add('users', {
       email,
       password: hashedPassword,
       name: name || email.split('@')[0],
-      role,
+      role: 'superadmin',
+      store_id: null,
+      disabled: 0,
       token_version: 0,
       must_change_password: 0,
     });
@@ -150,6 +149,9 @@ async function login(req, res) {
     const isMatch = await bcrypt.compare(password, user?.password || DUMMY_HASH);
     if (!user || !isMatch) {
       return res.status(401).json({ error: 'Identifiants incorrects.' });
+    }
+    if (user.disabled) {
+      return res.status(403).json({ error: 'Ce compte est désactivé. Contactez votre administrateur.' });
     }
 
     res.json({ token: signToken(user), user: publicUser(user) });
@@ -219,7 +221,7 @@ async function verifyToken(token) {
   try {
     const decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
     const user = await fdb.getById('users', decoded.userId);
-    if (!user || (user.token_version || 0) !== (decoded.tv || 0)) return null;
+    if (!user || user.disabled || (user.token_version || 0) !== (decoded.tv || 0)) return null;
     return user;
   } catch {
     return null;
@@ -246,7 +248,12 @@ async function authMiddleware(req, res, next) {
     });
   }
 
-  req.user = { userId: user.id, email: user.email, role: user.role || 'user' };
+  req.user = {
+    userId: user.id,
+    email: user.email,
+    role: user.role || 'user',
+    storeId: user.store_id || null,
+  };
   next();
 }
 
@@ -258,4 +265,9 @@ module.exports = {
   updatePassword,
   authMiddleware,
   verifyToken,
+  // shared with accountController
+  normalizeEmail,
+  validatePassword,
+  EMAIL_RE,
+  BCRYPT_COST,
 };

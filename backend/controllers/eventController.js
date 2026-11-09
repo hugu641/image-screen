@@ -7,7 +7,7 @@ async function listEvents(req, res) {
   try {
     const events = await fdb.getAll(
       'events',
-      [],
+      [{ field: 'store_id', value: req.user.storeId }],
       { orderBy: 'timestamp', orderDir: 'desc', limit }
     );
     res.json(events);

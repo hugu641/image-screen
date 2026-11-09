@@ -231,7 +231,7 @@ async function getStats(req, res) {
     const [allKeys, allRedemptions, allUsers] = await Promise.all([
       fdb.getAll('licenseKeys'),
       fdb.getAll('keyRedemptions'),
-      fdb.getAll('users', [{ field: 'role', op: '!=', value: 'admin' }], { orderBy: 'role' })
+      fdb.getAll('users', [{ field: 'role', op: '!=', value: 'superadmin' }], { orderBy: 'role' })
     ]);
 
     const activeKeys = allKeys.filter(k => k.is_active);

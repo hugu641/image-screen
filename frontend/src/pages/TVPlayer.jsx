@@ -247,16 +247,17 @@ export default function TVPlayer() {
 
   /* Boot: identity, branding, offline resume */
   useEffect(() => {
-    api.get('/settings')
-      .then((d) => { setStoreName(d.store_name || ''); setLogoUrl(d.logo || ''); })
-      .catch((err) => console.error('Failed to load settings:', err));
-
     let id = localStorage.getItem('screen_id');
     let code = localStorage.getItem('pairing_code');
     if (!id) { id = generateScreenId(); localStorage.setItem('screen_id', id); }
     if (!code) { code = generatePairingCode(); localStorage.setItem('pairing_code', code); }
     setScreenId(id);
     setPairingCode(code);
+
+    // Branding of the store this screen belongs to: the screen id tells the server which store
+    api.get(`/settings?screenId=${encodeURIComponent(id)}`)
+      .then((d) => { setStoreName(d.store_name || ''); setLogoUrl(d.logo || ''); })
+      .catch((err) => console.error('Failed to load settings:', err));
 
     // Resume from the local cache right away (the server confirms or corrects once connected)
     const wasAssociated = localStorage.getItem('is_associated') === '1';

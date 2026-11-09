@@ -170,7 +170,7 @@ async function start() {
   setInterval(housekeeping, 60 * 60 * 1000).unref();
 
   if ((await fdb.count('users')) === 0) {
-    console.warn('⚠️  Aucun compte administrateur : le PREMIER compte créé devient administrateur.');
+    console.warn('⚠️  Aucun compte : le PREMIER compte créé devient super-administrateur.');
     console.warn(process.env.SETUP_TOKEN
       ? '    Un code d\'installation (SETUP_TOKEN) est exigé pour le créer.'
       : '    Créez-le tout de suite, ou définissez SETUP_TOKEN si le serveur est accessible depuis Internet.');

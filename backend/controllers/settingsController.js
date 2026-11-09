@@ -1,15 +1,42 @@
 const { fdb } = require('../database/db');
 const { logEvent } = require('../services/socketService');
+const { verifyToken } = require('./authController');
+
+const DEFAULTS = { store_name: 'Mon Magasin', default_duration: '5', logo: '' };
+
+/**
+ * Which store's settings to return:
+ *  - a logged-in user → their store;
+ *  - a screen (unauthenticated TV player) → the store it is paired with, given by ?screenId=.
+ * Anything else gets the defaults, so nothing leaks between stores.
+ */
+async function storeForRequest(req) {
+  const header = req.headers['authorization'] || '';
+  const [scheme, token] = header.split(' ');
+  if (scheme === 'Bearer' && token) {
+    const user = await verifyToken(token);
+    if (user && user.store_id) return user.store_id;
+  }
+  const screenId = typeof req.query.screenId === 'string' ? req.query.screenId : '';
+  if (screenId) {
+    const screen = await fdb.getById('screens', screenId);
+    if (screen && screen.store_id) return screen.store_id;
+  }
+  return null;
+}
 
 async function getSettings(req, res) {
   try {
-    const settings = await fdb.getById('settings', 'config') || {};
+    const storeId = await storeForRequest(req);
+    if (!storeId) return res.json({ ...DEFAULTS });
 
-    // Valeurs par défaut
-    if (!settings.store_name) settings.store_name = 'Mon Magasin';
-    if (!settings.default_duration) settings.default_duration = '5';
-    if (!settings.logo) settings.logo = '';
-
+    const store = await fdb.getById('stores', storeId);
+    const row = (await fdb.getById('settings', storeId)) || {};
+    const settings = {
+      store_name: row.store_name || (store && store.name) || DEFAULTS.store_name,
+      default_duration: row.default_duration || DEFAULTS.default_duration,
+      logo: row.logo || DEFAULTS.logo,
+    };
     res.json(settings);
   } catch (error) {
     console.error('Get settings error:', error);
@@ -19,6 +46,7 @@ async function getSettings(req, res) {
 
 async function updateSettings(req, res) {
   const { store_name, default_duration, logo } = req.body || {};
+  const storeId = req.user.storeId;
 
   try {
     const updates = {};
@@ -43,8 +71,9 @@ async function updateSettings(req, res) {
       updates.logo = logo;
     }
 
-    await fdb.set('settings', 'config', updates);
-    await logEvent(null, 'info', 'Paramètres système mis à jour');
+    // One settings row per store (id = store id)
+    await fdb.set('settings', storeId, updates);
+    await logEvent(null, 'info', 'Paramètres du magasin mis à jour', storeId);
 
     res.json({ message: 'Paramètres enregistrés avec succès.' });
   } catch (error) {

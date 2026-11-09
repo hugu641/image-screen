@@ -10,7 +10,7 @@ const db = new sqlite3.Database(DB_PATH);
 // Table and column names are interpolated into SQL (values are always bound
 // parameters), so they are strictly validated to make injection impossible.
 const TABLES = new Set([
-  'users', 'settings', 'media', 'playlists', 'screens', 'events', 'licenseKeys', 'keyRedemptions',
+  'users', 'settings', 'media', 'playlists', 'screens', 'events', 'licenseKeys', 'keyRedemptions', 'stores',
 ]);
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const OPS = new Set(['=', '<', '>', '<=', '>=', '!=']);
@@ -210,8 +210,9 @@ const firestoreHelpers = {
     return row ? row.n : 0;
   },
 
-  async sumMediaSize() {
-    const row = await query.get('SELECT COALESCE(SUM(size), 0) AS total FROM media');
+  /** Bytes used by one store's media library (each store has its own quota). */
+  async sumMediaSize(storeId) {
+    const row = await query.get('SELECT COALESCE(SUM(size), 0) AS total FROM media WHERE store_id = ?', [String(storeId)]);
     return row ? row.total : 0;
   },
 
@@ -270,6 +271,34 @@ async function addColumnIfNotExists(table, column, type) {
   } catch (err) {
     console.error(`[Database Migration] Failed to add column "${column}" to "${table}":`, err.message);
   }
+}
+
+/**
+ * Moves an installation created before multi-store support into a single store.
+ * - the existing content and users join a default store (named after the old store name);
+ * - the old 'admin' account becomes the super-admin (manages accounts, sees no content);
+ * - the old global settings row ('config') becomes that store's settings.
+ * Idempotent: it only runs while legacy rows (store_id NULL, role 'admin') remain.
+ */
+async function migrateToStores() {
+  // Legacy installations are the only ones with a role 'admin' account (multi-store roles are
+  // 'superadmin', 'storeadmin' and 'user'). Once migrated, nothing matches again.
+  const legacy = await query.get("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'");
+  if (!legacy || !legacy.n) return;
+
+  const old = await query.get("SELECT store_name FROM settings WHERE id = 'config'");
+  const storeId = newId();
+  await query.run('INSERT INTO stores (id, name, created_at) VALUES (?, ?, ?)', [
+    storeId, (old && old.store_name) || 'Mon Magasin', new Date().toISOString(),
+  ]);
+
+  await query.run("UPDATE users SET role = 'superadmin', store_id = NULL WHERE role = 'admin'");
+  await query.run("UPDATE users SET store_id = ? WHERE store_id IS NULL AND role = 'user'", [storeId]);
+  for (const t of ['media', 'playlists', 'screens', 'events']) {
+    await query.run(`UPDATE ${t} SET store_id = ? WHERE store_id IS NULL`, [storeId]);
+  }
+  await query.run("UPDATE settings SET id = ? WHERE id = 'config'", [storeId]);
+  console.log(`[Database Migration] Existing data moved to store "${(old && old.store_name) || 'Mon Magasin'}" (id ${storeId}).`);
 }
 
 // Initialization and seeding of default data
@@ -371,6 +400,14 @@ async function initDb() {
       )
     `);
 
+    await query.run(`
+      CREATE TABLE IF NOT EXISTS stores (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        created_at TEXT
+      )
+    `);
+
     // Schema Migrations (Ensure columns exist on existing databases)
     await addColumnIfNotExists('users', 'plan', 'TEXT');
     await addColumnIfNotExists('users', 'subscription_status', 'TEXT');
@@ -391,6 +428,15 @@ async function initDb() {
         ['config', 'Mon Magasin', '5', '']
       );
     }
+
+    // Multi-store: every piece of content belongs to exactly one store (see migrateToStores)
+    await addColumnIfNotExists('settings', 'created_at', 'TEXT'); // settings are now created per store
+    await addColumnIfNotExists('users', 'store_id', 'TEXT');
+    await addColumnIfNotExists('users', 'disabled', 'INTEGER DEFAULT 0');
+    await addColumnIfNotExists('media', 'store_id', 'TEXT');
+    await addColumnIfNotExists('playlists', 'store_id', 'TEXT');
+    await addColumnIfNotExists('screens', 'store_id', 'TEXT');
+    await addColumnIfNotExists('events', 'store_id', 'TEXT');
 
     // Security migrations
     await addColumnIfNotExists('users', 'token_version', 'INTEGER DEFAULT 0');
@@ -423,6 +469,8 @@ async function initDb() {
     for (const suffix of ['', '-journal', '-wal', '-shm']) {
       try { fs.chmodSync(DB_PATH + suffix, 0o600); } catch { /* file may not exist */ }
     }
+
+    await migrateToStores();
 
     console.log('✅  SQLite Database successfully initialized.');
   } catch (error) {

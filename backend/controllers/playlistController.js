@@ -11,7 +11,8 @@ async function getPlaylistDetails(playlistId) {
     const sortedItems = [...playlist.items].sort((a, b) => a.position - b.position);
     for (const item of sortedItems) {
       const media = await fdb.getById('media', item.mediaId);
-      if (media) {
+      // Only media of the playlist's own store can appear in it
+      if (media && media.store_id === playlist.store_id) {
         items.push({
           ...media,
           position: item.position,
@@ -57,6 +58,15 @@ async function writePlaylistItems(playlistId, mediaIds) {
   await fdb.update('playlists', playlistId, { items });
 }
 
+/** True only when every media id exists AND belongs to the given store. */
+async function mediaOwnedBy(mediaIds, storeId) {
+  for (const id of mediaIds) {
+    const media = await fdb.getById('media', id);
+    if (!media || media.store_id !== storeId) return false;
+  }
+  return true;
+}
+
 // ─── Input validation ─────────────────────────────────────────────────────────
 const TRANSITIONS = ['fade', 'zoom', 'slide'];
 
@@ -75,30 +85,38 @@ function sanitizePlaylistInput({ name, duration, transition, mediaIds }) {
   return { name: cleanName, duration: cleanDuration, transition: cleanTransition, mediaIds: ids };
 }
 
+const NOT_IN_STORE = { error: 'Un des médias sélectionnés est introuvable dans votre magasin.' };
+
 // ─── Actions ──────────────────────────────────────────────────────────────────
 
 async function createPlaylist(req, res) {
+  const storeId = req.user.storeId;
   const { random_order, loop_playback } = req.body || {};
   const input = sanitizePlaylistInput(req.body || {});
   if (input.error) return res.status(400).json({ error: input.error });
   const { name, duration, transition, mediaIds } = input;
 
   try {
-    const existing = await fdb.getWhere('playlists', [{ field: 'name', value: name }]);
+    const existing = await fdb.getWhere('playlists', [
+      { field: 'name', value: name },
+      { field: 'store_id', value: storeId },
+    ]);
     if (existing) {
       return res.status(400).json({ error: 'Une playlist avec ce nom existe déjà.' });
     }
+    if (!(await mediaOwnedBy(mediaIds, storeId))) return res.status(400).json({ error: NOT_IN_STORE.error });
 
     const playlistId = await fdb.add('playlists', {
       name,
       duration: duration || 5,
       transition: transition || 'fade',
       random_order: random_order ? true : false,
-      loop_playback: loop_playback !== undefined ? (loop_playback ? true : false) : true
+      loop_playback: loop_playback !== undefined ? (loop_playback ? true : false) : true,
+      store_id: storeId,
     });
 
     await writePlaylistItems(playlistId, mediaIds);
-    await logEvent(null, 'info', `Playlist créée : ${name}`);
+    await logEvent(null, 'info', `Playlist créée : ${name}`, storeId);
 
     const newPlaylist = await getPlaylistDetails(playlistId);
     res.status(201).json(newPlaylist);
@@ -110,7 +128,7 @@ async function createPlaylist(req, res) {
 
 async function listPlaylists(req, res) {
   try {
-    const playlists = await fdb.getAll('playlists', [], { orderBy: 'created_at', orderDir: 'desc' });
+    const playlists = await fdb.getAll('playlists', [{ field: 'store_id', value: req.user.storeId }], { orderBy: 'created_at', orderDir: 'desc' });
 
     const result = playlists.map((p) => {
       const media_count = (p.items && Array.isArray(p.items)) ? p.items.length : 0;
@@ -129,7 +147,7 @@ async function getPlaylist(req, res) {
 
   try {
     const details = await getPlaylistDetails(id);
-    if (!details) {
+    if (!details || details.store_id !== req.user.storeId) {
       return res.status(404).json({ error: 'Playlist introuvable.' });
     }
     res.json(details);
@@ -141,6 +159,7 @@ async function getPlaylist(req, res) {
 
 async function updatePlaylist(req, res) {
   const { id } = req.params;
+  const storeId = req.user.storeId;
   const { random_order, loop_playback } = req.body || {};
   const input = sanitizePlaylistInput(req.body || {});
   if (input.error) return res.status(400).json({ error: input.error });
@@ -148,9 +167,10 @@ async function updatePlaylist(req, res) {
 
   try {
     const playlist = await fdb.getById('playlists', id);
-    if (!playlist) {
+    if (!playlist || playlist.store_id !== storeId) {
       return res.status(404).json({ error: 'Playlist introuvable.' });
     }
+    if (!(await mediaOwnedBy(mediaIds, storeId))) return res.status(400).json({ error: NOT_IN_STORE.error });
 
     await fdb.update('playlists', id, {
       name,
@@ -161,7 +181,7 @@ async function updatePlaylist(req, res) {
     });
 
     await writePlaylistItems(id, mediaIds);
-    await logEvent(null, 'info', `Playlist mise à jour : ${name}`);
+    await logEvent(null, 'info', `Playlist mise à jour : ${name}`, storeId);
     await syncAssignedScreens(id);
 
     const updated = await getPlaylistDetails(id);
@@ -174,17 +194,18 @@ async function updatePlaylist(req, res) {
 
 async function deletePlaylist(req, res) {
   const { id } = req.params;
+  const storeId = req.user.storeId;
 
   try {
     const playlist = await fdb.getById('playlists', id);
-    if (!playlist) {
+    if (!playlist || playlist.store_id !== storeId) {
       return res.status(404).json({ error: 'Playlist introuvable.' });
     }
 
     const screens = await fdb.getAll('screens', [{ field: 'playlist_id', value: String(id) }]);
 
     await fdb.delete('playlists', id);
-    await logEvent(null, 'info', `Playlist supprimée : ${playlist.name}`);
+    await logEvent(null, 'info', `Playlist supprimée : ${playlist.name}`, storeId);
 
     // Notifier les écrans affectés
     for (const screen of screens) {
@@ -200,17 +221,21 @@ async function deletePlaylist(req, res) {
 
 async function duplicatePlaylist(req, res) {
   const { id } = req.params;
+  const storeId = req.user.storeId;
 
   try {
     const source = await getPlaylistDetails(id);
-    if (!source) {
+    if (!source || source.store_id !== storeId) {
       return res.status(404).json({ error: 'Playlist source introuvable.' });
     }
 
     let copyName = `Copie de ${source.name}`;
     let counter = 1;
     while (true) {
-      const exists = await fdb.getWhere('playlists', [{ field: 'name', value: copyName }]);
+      const exists = await fdb.getWhere('playlists', [
+        { field: 'name', value: copyName },
+        { field: 'store_id', value: storeId },
+      ]);
       if (!exists) break;
       copyName = `Copie de ${source.name} (${counter++})`;
     }
@@ -227,10 +252,11 @@ async function duplicatePlaylist(req, res) {
       transition: source.transition,
       random_order: source.random_order,
       loop_playback: source.loop_playback,
-      items
+      items,
+      store_id: storeId,
     });
 
-    await logEvent(null, 'info', `Playlist dupliquée : ${source.name} -> ${copyName}`);
+    await logEvent(null, 'info', `Playlist dupliquée : ${source.name} -> ${copyName}`, storeId);
 
     const copyDetails = await getPlaylistDetails(newId);
     res.status(201).json(copyDetails);
