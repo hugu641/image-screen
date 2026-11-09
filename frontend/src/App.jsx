@@ -22,6 +22,8 @@ const TVPlayer = lazy(() => import('./pages/TVPlayer'));
 const LivePreview = lazy(() => import('./pages/LivePreview'));
 const AdminPanel = lazy(() => import('./pages/AdminPanel'));
 const Accounts = lazy(() => import('./pages/Accounts'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const ServerSetup = lazy(() => import('./pages/ServerSetup'));
 
 const APP_MODE = import.meta.env.VITE_APP_MODE || 'web';
@@ -87,6 +89,8 @@ export default function App() {
 
                     {/* Public */}
                     <Route path="/login" element={<Login />} />
+                    <Route path="/mot-de-passe-oublie" element={<ForgotPassword />} />
+                    <Route path="/reset" element={<ResetPassword />} />
                     <Route path="/tv" element={<TVPlayer />} />
                     {/* The TV app has no landing page: it opens straight on the player */}
                     <Route path="/" element={APP_MODE === 'tv' ? <Navigate to="/tv" replace /> : <Home />} />

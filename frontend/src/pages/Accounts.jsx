@@ -33,6 +33,22 @@ function PasswordField({ value, onChange }) {
   );
 }
 
+/** Email is configured: the owner receives an invitation and chooses their own password. */
+function InvitationNote() {
+  return (
+    <p className="sm:col-span-2 rounded-xl bg-surface-2 px-4 py-3 text-[13px] text-muted">
+      Un email d'invitation sera envoyé : la personne choisira elle-même son mot de passe.
+    </p>
+  );
+}
+
+/** Whether the server can send emails (decides between an invitation and a provisional password). */
+function useMailEnabled() {
+  const [enabled, setEnabled] = useState(null);
+  useEffect(() => { api.get('/auth/status').then((s) => setEnabled(!!s.mailEnabled)).catch(() => setEnabled(false)); }, []);
+  return enabled;
+}
+
 // ─── Super-admin: stores and store admins ────────────────────────────────────
 
 function StoresAdmin() {
@@ -43,6 +59,7 @@ function StoresAdmin() {
   // Store that receives a new administrator (a store that has none yet, e.g. after migration)
   const [addingTo, setAddingTo] = useState(null);
   const [adminForm, setAdminForm] = useState({ name: '', email: '', password: '' });
+  const mailEnabled = useMailEnabled();
 
   const reload = () => api.get('/admin/stores').then(setStores).catch((err) => toast.error(err.message || 'Chargement impossible.'));
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -52,8 +69,8 @@ function StoresAdmin() {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post('/admin/stores', form);
-      toast.success(`Magasin « ${form.storeName} » créé. Compte : ${form.email}`);
+      const res = await api.post('/admin/stores', form);
+      toast.success(res.invitationSent ? `Magasin « ${form.storeName} » créé. Invitation envoyée à ${form.email}.` : `Magasin « ${form.storeName} » créé. Compte : ${form.email}`);
       setForm({ storeName: '', name: '', email: '', password: '' });
       reload();
     } catch (err) {
@@ -67,8 +84,8 @@ function StoresAdmin() {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post('/admin/stores', { ...adminForm, storeId: store.id });
-      toast.success(`Administrateur ajouté à « ${store.name} ».`);
+      const res = await api.post('/admin/stores', { ...adminForm, storeId: store.id });
+      toast.success(res.invitationSent ? `Invitation envoyée à ${adminForm.email}.` : `Administrateur ajouté à « ${store.name} ».`);
       setAdminForm({ name: '', email: '', password: '' });
       setAddingTo(null);
       reload();
@@ -105,7 +122,8 @@ function StoresAdmin() {
           <Field label="Email de connexion" required>
             {(p) => <Input {...p} type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />}
           </Field>
-          <PasswordField value={form.password} onChange={(password) => setForm({ ...form, password })} />
+          {mailEnabled === false && <PasswordField value={form.password} onChange={(password) => setForm({ ...form, password })} />}
+          {mailEnabled && <InvitationNote />}
           <div className="sm:col-span-2 flex justify-end">
             <Button type="submit" variant="primary" icon={UserPlus} loading={busy}>Créer le magasin</Button>
           </div>
@@ -140,7 +158,8 @@ function StoresAdmin() {
                   <Field label="Email de connexion" required>
                     {(p) => <Input {...p} type="email" required value={adminForm.email} onChange={(e) => setAdminForm({ ...adminForm, email: e.target.value })} />}
                   </Field>
-                  <PasswordField value={adminForm.password} onChange={(password) => setAdminForm({ ...adminForm, password })} />
+                  {mailEnabled === false && <PasswordField value={adminForm.password} onChange={(password) => setAdminForm({ ...adminForm, password })} />}
+                  {mailEnabled && <InvitationNote />}
                   <div className="flex items-end justify-end gap-2 sm:col-span-2">
                     <Button variant="ghost" onClick={() => setAddingTo(null)}>Annuler</Button>
                     <Button type="submit" variant="primary" icon={UserPlus} loading={busy}>Ajouter</Button>
@@ -167,6 +186,7 @@ function StoreUsers() {
   const [users, setUsers] = useState(null);
   const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [busy, setBusy] = useState(false);
+  const mailEnabled = useMailEnabled();
 
   const reload = () => api.get('/store/users').then(setUsers).catch((err) => toast.error(err.message || 'Chargement impossible.'));
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -176,8 +196,8 @@ function StoreUsers() {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post('/store/users', form);
-      toast.success(`Compte créé pour ${form.email}.`);
+      const res = await api.post('/store/users', form);
+      toast.success(res.invitationSent ? `Invitation envoyée à ${form.email}.` : `Compte créé pour ${form.email}.`);
       setForm({ name: '', email: '', password: '' });
       reload();
     } catch (err) {
@@ -221,7 +241,8 @@ function StoreUsers() {
           <Field label="Email de connexion" required>
             {(p) => <Input {...p} type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />}
           </Field>
-          <PasswordField value={form.password} onChange={(password) => setForm({ ...form, password })} />
+          {mailEnabled === false && <PasswordField value={form.password} onChange={(password) => setForm({ ...form, password })} />}
+          {mailEnabled && <InvitationNote />}
           <div className="sm:col-span-2 flex justify-end">
             <Button type="submit" variant="primary" icon={UserPlus} loading={busy}>Créer le compte</Button>
           </div>

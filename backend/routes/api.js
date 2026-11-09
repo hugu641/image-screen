@@ -11,6 +11,7 @@ const screenController = require('../controllers/screenController');
 const settingsController = require('../controllers/settingsController');
 const eventController = require('../controllers/eventController');
 const licenseController = require('../controllers/licenseController');
+const passwordController = require('../controllers/passwordController');
 
 // ─── Rate limiting ───────────────────────────────────────────────────────────
 const limiter = (windowMs, limit, error, extra = {}) => rateLimit({
@@ -58,6 +59,10 @@ router.get('/auth/status', authController.status);
 // Public registration exists only for the very first account (becomes super-admin)
 router.post('/auth/register', registerLimiter, authController.register);
 router.post('/auth/login', loginLimiter, authController.login);
+// Reset link by email (rate limited per IP: one email per address and per IP is enough)
+const forgotLimiter = limiter(60 * 60 * 1000, 5, 'Trop de demandes. Réessayez plus tard.');
+router.post('/auth/forgot', forgotLimiter, passwordController.forgotPassword);
+router.post('/auth/reset', loginLimiter, passwordController.resetPassword);
 router.get('/auth/me', authController.authMiddleware, authController.me);
 router.put('/auth/update-password', loginLimiter, authController.authMiddleware, authController.updatePassword);
 

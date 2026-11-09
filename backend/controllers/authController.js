@@ -67,6 +67,7 @@ async function status(req, res) {
       needsSetup: total === 0,
       needsSetupToken: total === 0 && setupTokenRequired(),
       registrationOpen: total === 0,
+      mailEnabled: require('../services/mailService').mailEnabled(),
     });
   } catch (error) {
     console.error('Auth status error:', error);

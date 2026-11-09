@@ -432,6 +432,9 @@ async function initDb() {
     // Multi-store: every piece of content belongs to exactly one store (see migrateToStores)
     await addColumnIfNotExists('settings', 'created_at', 'TEXT'); // settings are now created per store
     await addColumnIfNotExists('users', 'store_id', 'TEXT');
+    // Password reset / invitation: only a SHA-256 hash of the one-time token is stored
+    await addColumnIfNotExists('users', 'reset_token_hash', 'TEXT');
+    await addColumnIfNotExists('users', 'reset_expires_at', 'TEXT');
     await addColumnIfNotExists('users', 'disabled', 'INTEGER DEFAULT 0');
     await addColumnIfNotExists('media', 'store_id', 'TEXT');
     await addColumnIfNotExists('playlists', 'store_id', 'TEXT');

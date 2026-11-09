@@ -11,6 +11,8 @@ const bcrypt = require('bcryptjs');
 const { fdb } = require('../database/db');
 const { normalizeEmail, validatePassword, EMAIL_RE, BCRYPT_COST } = require('./authController');
 const { logEvent, disconnectUser } = require('../services/socketService');
+const { sendInvitation } = require('./passwordController');
+const { mailEnabled } = require('../services/mailService');
 
 const ROLE_STORE_ADMIN = 'storeadmin';
 const ROLE_USER = 'user';
@@ -35,15 +37,20 @@ function parseDisabled(value) {
 function checkNewAccount(body) {
   const email = normalizeEmail(body?.email);
   const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 100) : '';
-  const password = body?.password;
-  if (!email || !password) return { error: 'Veuillez saisir un email et un mot de passe.' };
+  const password = typeof body?.password === 'string' ? body.password : '';
+  if (!email) return { error: 'Veuillez saisir un email.' };
   if (email.length > 254 || !EMAIL_RE.test(email)) return { error: 'Adresse email invalide.' };
-  const pwdError = validatePassword(password);
-  if (pwdError) return { error: pwdError };
-  return { email, name: name || email.split('@')[0], password };
+  if (password) {
+    const pwdError = validatePassword(password);
+    if (pwdError) return { error: pwdError };
+  } else if (!mailEnabled()) {
+    return { error: "Mot de passe requis : l'envoi d'emails n'est pas configuré sur ce serveur." };
+  }
+  // Without a password, the account gets an unknown random one and the owner sets their own by email
+  return { email, name: name || email.split('@')[0], password: password || require('crypto').randomBytes(24).toString('base64url') };
 }
 
-async function createAccount({ email, name, password, role, storeId }) {
+async function createAccount({ email, name, password, role, storeId, invite }) {
   const hashed = await bcrypt.hash(password, BCRYPT_COST);
   const id = await fdb.add('users', {
     email,
@@ -55,7 +62,10 @@ async function createAccount({ email, name, password, role, storeId }) {
     token_version: 0,
     must_change_password: 1,
   });
-  return fdb.getById('users', id);
+  const user = await fdb.getById('users', id);
+  // The owner sets their own password from the invitation link
+  if (invite) user.invitationSent = await sendInvitation(user);
+  return user;
 }
 
 // ─── Super-admin ─────────────────────────────────────────────────────────────
@@ -109,9 +119,9 @@ async function createStoreAdmin(req, res) {
       store = await fdb.getById('stores', newStoreId);
     }
 
-    const account = await createAccount({ ...checked, role: ROLE_STORE_ADMIN, storeId: store.id });
+    const account = await createAccount({ ...checked, role: ROLE_STORE_ADMIN, storeId: store.id, invite: !req.body?.password });
     await logEvent(null, 'info', `Admin magasin créé : ${checked.email} (${store.name})`, null);
-    res.status(201).json({ account: publicAccount(account), store: { id: store.id, name: store.name } });
+    res.status(201).json({ account: publicAccount(account), store: { id: store.id, name: store.name }, invitationSent: !!account.invitationSent });
   } catch (error) {
     console.error('Create store admin error:', error);
     res.status(500).json({ error: 'Erreur lors de la création du compte.' });
@@ -172,8 +182,8 @@ async function createStoreUser(req, res) {
     if (await fdb.getWhere('users', [{ field: 'email', value: checked.email }])) {
       return res.status(409).json({ error: 'Un compte avec cet email existe déjà.' });
     }
-    const account = await createAccount({ ...checked, role: ROLE_USER, storeId: req.user.storeId });
-    res.status(201).json({ account: publicAccount(account) });
+    const account = await createAccount({ ...checked, role: ROLE_USER, storeId: req.user.storeId, invite: !req.body?.password });
+    res.status(201).json({ account: publicAccount(account), invitationSent: !!account.invitationSent });
   } catch (error) {
     console.error('Create store user error:', error);
     res.status(500).json({ error: 'Erreur lors de la création du compte.' });
