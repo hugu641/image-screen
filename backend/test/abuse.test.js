@@ -7,6 +7,12 @@ const http = require('http');
 const { io } = require('socket.io-client');
 const { startServer, api, storeAdminToken } = require('./helpers');
 
+/** An MP4-looking buffer of the given size (valid header, padding after it). */
+function fakeVideo(size) {
+  const header = Buffer.from('0000001866747970 69736f6d'.replace(/ /g, ''), 'hex');
+  return Buffer.concat([header, Buffer.alloc(size - header.length)]);
+}
+
 const PNG_1x1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   'base64'
@@ -181,13 +187,13 @@ test('first admin account can be protected by SETUP_TOKEN', async (t) => {
 });
 
 test('storage quota is enforced', async (t) => {
-  const srv = await startServer({ MAX_STORAGE_MB: '0.00012' }); // ~125 bytes
+  const srv = await startServer({ MAX_STORAGE_MB: '0.5' }); // 512 KB per store
   t.after(() => srv.stop());
   const reg = await api(srv.base, 'POST', '/auth/register', { email: 'boss@shop.fr', password: PASSWORD });
   const store = await storeAdminToken(srv.base, reg.data.token);
   const upload = () => {
     const fd = new FormData();
-    fd.append('files', new Blob([PNG_1x1]), 'a.png');
+    fd.append('files', new Blob([fakeVideo(400 * 1024)]), 'a.mp4');
     return api(srv.base, 'POST', '/media/upload', fd, store.token);
   };
   assert.equal((await upload()).status, 201);

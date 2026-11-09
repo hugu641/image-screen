@@ -37,16 +37,20 @@ function getTransporter() {
   return transporter;
 }
 
-/** Returns true when the message was handed to the transport. */
-async function sendMail({ to, subject, text }) {
+/**
+ * Returns true when the message was handed to the transport.
+ * attachments: [{ filename, path }] (files read from disk by the transport).
+ */
+async function sendMail({ to, subject, text, attachments = [] }) {
   const mode = transportMode();
   const from = process.env.MAIL_FROM || process.env.SMTP_USER || 'ImageScreen';
   if (mode === 'smtp') {
-    await getTransporter().sendMail({ from, to, subject, text });
+    await getTransporter().sendMail({ from, to, subject, text, attachments });
     return true;
   }
   if (mode === 'file') {
-    fs.appendFileSync(path.join(DATA_DIR, 'outbox.jsonl'), JSON.stringify({ to, subject, text }) + '\n', { mode: 0o600 });
+    const record = { to, subject, text, attachments: attachments.map((a) => a.filename) };
+    fs.appendFileSync(path.join(DATA_DIR, 'outbox.jsonl'), JSON.stringify(record) + '\n', { mode: 0o600 });
     return true;
   }
   return false;

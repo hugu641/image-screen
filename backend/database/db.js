@@ -435,6 +435,7 @@ async function initDb() {
     // Password reset / invitation: only a SHA-256 hash of the one-time token is stored
     await addColumnIfNotExists('users', 'reset_token_hash', 'TEXT');
     await addColumnIfNotExists('users', 'reset_expires_at', 'TEXT');
+    await addColumnIfNotExists('users', 'reset_purpose', 'TEXT');
     await addColumnIfNotExists('users', 'disabled', 'INTEGER DEFAULT 0');
     await addColumnIfNotExists('media', 'store_id', 'TEXT');
     await addColumnIfNotExists('playlists', 'store_id', 'TEXT');

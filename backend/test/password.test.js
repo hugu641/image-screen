@@ -114,3 +114,31 @@ test('without email configured, accounts need an explicit password', async (t) =
   const forgot = await api(srv.base, 'POST', '/auth/forgot', { email: 'x@shop.fr' });
   assert.equal(forgot.status, 200);
 });
+
+test('the user guide is emailed after the first password, and downloadable by signed-in users', async (t) => {
+  const srv = await startServer(MAIL_ENV);
+  t.after(() => srv.stop());
+  const { base, dir } = srv;
+  const sup = await api(base, 'POST', '/auth/register', { email: 'boss@shop.fr', password: PASSWORD });
+
+  // Download: signed-in only, returns the PDF
+  assert.equal((await fetch(base + '/api/guide')).status, 401);
+  const pdf = await fetch(base + '/api/guide', { headers: { Authorization: 'Bearer ' + sup.data.token } });
+  assert.equal(pdf.status, 200);
+  assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+  assert.equal((await pdf.arrayBuffer()).byteLength > 10000, true);
+
+  // Invitation: the guide follows the first password
+  await api(base, 'POST', '/admin/stores', { storeName: 'Pain', email: 'paul@shop.fr', name: 'Paul' }, sup.data.token);
+  const inviteToken = tokenFor(dir, 'paul@shop.fr');
+  await api(base, 'POST', '/auth/reset', { token: inviteToken, newPassword: 'paul-passphrase-1' });
+  const guide = outbox(dir).find((m) => m.to === 'paul@shop.fr' && m.attachments && m.attachments.includes('Guide-ImageScreen.pdf'));
+  assert.ok(guide, 'guide sent with the PDF attached');
+
+  // A plain password reset does not send the guide again
+  await api(base, 'POST', '/auth/forgot', { email: 'paul@shop.fr' });
+  const resetToken = tokenFor(dir, 'paul@shop.fr');
+  const before = outbox(dir).filter((m) => m.to === 'paul@shop.fr' && m.attachments).length;
+  await api(base, 'POST', '/auth/reset', { token: resetToken, newPassword: 'paul-passphrase-2' });
+  assert.equal(outbox(dir).filter((m) => m.to === 'paul@shop.fr' && m.attachments).length, before);
+});

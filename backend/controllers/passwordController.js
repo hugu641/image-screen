@@ -11,22 +11,39 @@ const { sendMail, mailEnabled, appUrl } = require('../services/mailService');
 const RESET_TTL_MS = 60 * 60 * 1000;            // 1 hour
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;  // 7 days
 
+const path = require('path');
+const GUIDE_PATH = path.join(__dirname, '..', 'assets', 'Guide-ImageScreen.pdf');
+
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
 /** Stores a fresh one-time token on the user and returns the raw token. */
-async function issueToken(user, ttlMs) {
+async function issueToken(user, ttlMs, purpose) {
   const token = crypto.randomBytes(32).toString('base64url');
   await fdb.update('users', user.id, {
     reset_token_hash: hashToken(token),
     reset_expires_at: new Date(Date.now() + ttlMs).toISOString(),
+    reset_purpose: purpose,
   });
   return token;
+}
+
+/** Sends the user guide (PDF attached) to a user who has just set their password. */
+async function sendGuide(user) {
+  return sendMail({
+    to: user.email,
+    subject: 'ImageScreen : votre guide d\'utilisation',
+    text: `Bonjour${user.name ? ' ' + user.name : ''},\n\n` +
+      `Votre mot de passe est défini, votre compte ImageScreen est prêt.\n` +
+      `Vous trouverez en pièce jointe le guide d'utilisation : rôles, connexion des TV, médiathèque et playlists.\n\n` +
+      `Vous pouvez aussi le télécharger depuis le menu de l'application.`,
+    attachments: [{ filename: 'Guide-ImageScreen.pdf', path: GUIDE_PATH }],
+  });
 }
 
 /** Sends the "set your password" email for a new account. Returns true when it was sent. */
 async function sendInvitation(user) {
   if (!mailEnabled()) return false;
-  const token = await issueToken(user, INVITE_TTL_MS);
+  const token = await issueToken(user, INVITE_TTL_MS, 'invite');
   const link = appUrl(`/reset?token=${token}`);
   return sendMail({
     to: user.email,
@@ -47,7 +64,7 @@ async function forgotPassword(req, res) {
     if (email && EMAIL_RE.test(email) && mailEnabled()) {
       const user = await fdb.getWhere('users', [{ field: 'email', value: email }]);
       if (user && !user.disabled) {
-        const token = await issueToken(user, RESET_TTL_MS);
+        const token = await issueToken(user, RESET_TTL_MS, 'reset');
         await sendMail({
           to: user.email,
           subject: 'ImageScreen : réinitialisation du mot de passe',
@@ -85,7 +102,12 @@ async function resetPassword(req, res) {
       must_change_password: 0,
       reset_token_hash: null,
       reset_expires_at: null,
+      reset_purpose: null,
     });
+    // First password of a new account: the user receives the guide
+    if (user.reset_purpose === 'invite') {
+      try { await sendGuide(user); } catch (err) { console.error('Guide email error:', err.message); }
+    }
     res.json({ message: 'Mot de passe enregistré. Vous pouvez vous connecter.' });
   } catch (error) {
     console.error('Reset password error:', error);
@@ -93,4 +115,12 @@ async function resetPassword(req, res) {
   }
 }
 
-module.exports = { forgotPassword, resetPassword, sendInvitation };
+/** GET /api/guide — the guide for signed-in users (download from the menu). */
+function downloadGuide(req, res) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.download(GUIDE_PATH, 'Guide-ImageScreen.pdf', (err) => {
+    if (err && !res.headersSent) res.status(500).json({ error: 'Guide indisponible.' });
+  });
+}
+
+module.exports = { forgotPassword, resetPassword, sendInvitation, downloadGuide };

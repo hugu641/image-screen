@@ -8,105 +8,175 @@ const { logEvent } = require('../services/socketService');
 const { UPLOADS_DIR } = require('../config/paths');
 const { detectFileType, imageSizeIsSafe, sanitizeDisplayName } = require('../services/fileValidation');
 
-// ─── Multer : stockage en mémoire ───────────────────────────────────────────
-// The declared Content-Type is NOT trusted (clients often send application/octet-stream and
-// attackers can send anything): the real type is detected from the file content below.
-// Files are held in memory (needed for image compression): keep the worst case small.
+const MB = 1024 * 1024;
+// Videos are streamed to disk chunk by chunk, so they can be large (default 5 Go).
+// Images are compressed in memory, so they keep a small limit (default 50 Mo).
+const MAX_VIDEO_BYTES = (Number(process.env.MAX_UPLOAD_MB) || 5120) * MB;
+const MAX_IMAGE_BYTES = (Number(process.env.MAX_IMAGE_MB) || 50) * MB;
+const MAX_FILES_PER_UPLOAD = 5;
+const HEAD_BYTES = 64 * 1024; // enough to recognise every accepted type
+const INCOMING = '.incoming'; // per-store folder for uploads in progress
+
+const quotaBytes = () => (Number(process.env.MAX_STORAGE_MB) || 20480) * MB;
+
+function formatSize(bytes) {
+  return bytes >= 1024 * MB ? `${(bytes / (1024 * MB)).toFixed(1).replace(/\.0$/, '')} Go` : `${Math.round(bytes / MB)} Mo`;
+}
+
+class UploadError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// ─── Multer : écriture directe sur le disque ────────────────────────────────
+// The file is written to disk as it arrives, never held in memory: a 5 Go video uses the
+// same memory as a 5 Mo one. The declared Content-Type is NOT trusted: the real type is
+// detected from the content.
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 100 * 1024 * 1024, files: 5, fields: 5, fieldSize: 1024 } // 100 MB per file, 5 files max
-}).array('files', 5);
+  storage: multer.diskStorage({
+    destination(req, file, cb) {
+      const dir = path.join(UPLOADS_DIR, req.user.storeId, INCOMING);
+      fs.mkdir(dir, { recursive: true, mode: 0o700 }, (err) => cb(err, dir));
+    },
+    filename(req, file, cb) {
+      cb(null, crypto.randomBytes(16).toString('hex') + '.part');
+    },
+  }),
+  limits: { fileSize: MAX_VIDEO_BYTES, files: MAX_FILES_PER_UPLOAD, fields: 5, fieldSize: 1024 },
+}).array('files', MAX_FILES_PER_UPLOAD);
+
+async function removeTempFiles(files = []) {
+  await Promise.all(files.map((f) => fs.promises.unlink(f.path).catch(() => {})));
+}
+
+/** Reads only the first bytes of a file, enough to recognise its real type. */
+async function readHead(filePath) {
+  const handle = await fs.promises.open(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(HEAD_BYTES);
+    const { bytesRead } = await handle.read(buf, 0, HEAD_BYTES, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+/** Removes the leftovers of uploads interrupted by a crash or a closed connection (at startup). */
+async function cleanIncoming() {
+  if (!fs.existsSync(UPLOADS_DIR)) return;
+  for (const entry of fs.readdirSync(UPLOADS_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    fs.rmSync(path.join(UPLOADS_DIR, entry.name, INCOMING), { recursive: true, force: true });
+  }
+}
 
 // ─── Controller functions ─────────────────────────────────────────────────────
 
 async function uploadMedia(req, res) {
+  const storeId = req.user.storeId;
+
+  // Refuse early when the announced size cannot fit in the store's quota
+  const used = await fdb.sumMediaSize(storeId);
+  const announced = Number(req.headers['content-length']) || 0;
+  if (announced && used + announced > quotaBytes()) {
+    return res.status(413).json({ error: "Espace de stockage plein. Supprimez des médias avant d'en ajouter." });
+  }
+
   upload(req, res, async (err) => {
     if (err) {
-      return res.status(400).json({ error: err.message });
+      await removeTempFiles(req.files);
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: `Fichier trop volumineux (maximum ${formatSize(MAX_VIDEO_BYTES)} par fichier).` });
+      }
+      return res.status(400).json({ error: 'Téléversement invalide.' });
     }
 
-    if (!req.files || req.files.length === 0) {
+    const files = req.files || [];
+    if (files.length === 0) {
       return res.status(400).json({ error: 'Aucun fichier sélectionné.' });
     }
 
-    const uploadedItems = [];
-
+    const uploadsDir = path.join(UPLOADS_DIR, storeId);
     try {
-      // One folder per store: uploads/<storeId>/ (the library and the files are never shared)
-      const uploadsDir = path.join(UPLOADS_DIR, req.user.storeId);
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true, mode: 0o700 });
-      }
-
-      // Storage quota (disk-filling protection)
-      const maxBytes = (Number(process.env.MAX_STORAGE_MB) || 20480) * 1024 * 1024;
-      const incoming = req.files.reduce((n, f) => n + f.size, 0);
-      if ((await fdb.sumMediaSize(req.user.storeId)) + incoming > maxBytes) {
-        return res.status(413).json({ error: "Espace de stockage plein. Supprimez des médias avant d'en ajouter." });
-      }
-
-      for (const file of req.files) {
-        // The type is decided by the file CONTENT, not by what the client declared
-        const detected = detectFileType(file.buffer);
+      // 1. Check every file before storing any of them
+      const checked = [];
+      for (const file of files) {
+        const name = sanitizeDisplayName(file.originalname);
+        const detected = detectFileType(await readHead(file.path));
         if (!detected) {
-          return res.status(400).json({
-            error: `« ${sanitizeDisplayName(file.originalname)} » n'est pas un fichier JPG, PNG, WEBP ou MP4 valide.`
-          });
+          throw new UploadError(400, `« ${name} » n'est pas un fichier JPG, PNG, WEBP ou MP4 valide.`);
         }
-        if (detected.kind === 'image' && !imageSizeIsSafe(file.buffer, detected.mime)) {
-          return res.status(400).json({
-            error: `L'image « ${sanitizeDisplayName(file.originalname)} » est illisible ou trop grande en dimensions.`
-          });
+        if (detected.kind === 'image') {
+          if (file.size > MAX_IMAGE_BYTES) {
+            throw new UploadError(400, `L'image « ${name} » dépasse ${formatSize(MAX_IMAGE_BYTES)}.`);
+          }
+          const buffer = await fs.promises.readFile(file.path);
+          if (!imageSizeIsSafe(buffer, detected.mime)) {
+            throw new UploadError(400, `L'image « ${name} » est illisible ou trop grande en dimensions.`);
+          }
+          checked.push({ file, detected, name, buffer });
+        } else {
+          checked.push({ file, detected, name });
         }
       }
 
-      for (const file of req.files) {
-        const detected = detectFileType(file.buffer);
-        let mime = detected.mime;
-        let ext = detected.ext;
-        let buffer = file.buffer;
-        let size = file.size;
+      const incoming = checked.reduce((n, c) => n + c.file.size, 0);
+      if ((await fdb.sumMediaSize(storeId)) + incoming > quotaBytes()) {
+        throw new UploadError(413, "Espace de stockage plein. Supprimez des médias avant d'en ajouter.");
+      }
 
-        // Compression en mémoire pour les images
-        if (detected.kind === 'image') {
-          const compressed = await compressImageBuffer(buffer, mime);
-          if (compressed) {
-            buffer = compressed;
-            size = compressed.length;
-            mime = 'image/jpeg'; // the compressor always outputs JPEG
-            ext = '.jpg';
-          }
+      // 2. Store them in the store's folder under server-generated names
+      await fs.promises.mkdir(uploadsDir, { recursive: true, mode: 0o700 });
+      const uploadedItems = [];
+      for (const c of checked) {
+        let mime = c.detected.mime;
+        let ext = c.detected.ext;
+        let size = c.file.size;
+        const base = `file-${Date.now()}-${crypto.randomBytes(8).toString('hex')}`;
+
+        let compressed = null;
+        if (c.detected.kind === 'image') {
+          // Compression is done in memory (images are small by construction)
+          compressed = await compressImageBuffer(c.buffer, mime);
+        }
+        if (compressed) {
+          mime = 'image/jpeg'; // the compressor always outputs JPEG
+          ext = '.jpg';
+          size = compressed.length;
+          await fs.promises.writeFile(path.join(uploadsDir, base + ext), compressed, { mode: 0o644 });
+          await removeTempFiles([c.file]);
+        } else {
+          // Moved, not copied: a large video is never written twice
+          await fs.promises.rename(c.file.path, path.join(uploadsDir, base + ext));
+          await fs.promises.chmod(path.join(uploadsDir, base + ext), 0o644);
         }
 
-        // Server-generated name: random, extension from the detected type only
-        const filename = `file-${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
-        const uploadPath = path.join(uploadsDir, filename);
-        await fs.promises.writeFile(uploadPath, buffer, { mode: 0o644 });
-
-        // Enregistrer en SQLite (filepath = chemin relatif /uploads/...)
-        const publicUrl = `/uploads/${req.user.storeId}/${filename}`;
-        const displayName = sanitizeDisplayName(file.originalname);
+        const filename = base + ext;
+        const displayName = c.name;
         const mediaId = await fdb.add('media', {
           filename,
           original_name: displayName,
           mime_type: mime,
           size,
-          filepath: publicUrl,
-          store_id: req.user.storeId,
+          filepath: `/uploads/${storeId}/${filename}`,
+          store_id: storeId,
         });
-
-        const newMedia = await fdb.getById('media', mediaId);
-        uploadedItems.push(newMedia);
-
-        await logEvent(null, 'info', `Média ajouté : ${displayName}`, req.user.storeId);
+        uploadedItems.push(await fdb.getById('media', mediaId));
+        await logEvent(null, 'info', `Média ajouté : ${displayName}`, storeId);
       }
 
       res.status(201).json({
         message: `${uploadedItems.length} fichier(s) téléversé(s) avec succès.`,
         media: uploadedItems
       });
-    } catch (storageError) {
-      console.error('Storage upload error:', storageError);
+    } catch (error) {
+      await removeTempFiles(files);
+      if (error instanceof UploadError) {
+        return res.status(error.status).json({ error: error.message });
+      }
+      console.error('Storage upload error:', error);
       res.status(500).json({ error: "Une erreur est survenue lors de l'enregistrement des fichiers." });
     }
   });
@@ -219,5 +289,6 @@ module.exports = {
   uploadMedia,
   listMedia,
   deleteMedia,
-  renameMedia
+  renameMedia,
+  cleanIncoming,
 };

@@ -17,14 +17,14 @@ import {
 import { useAuth } from '../hooks/useAuth';
 import { useStoreSettings } from '../hooks/useStoreSettings';
 import { useAdminSocket, useSocketConnected } from '../hooks/useAdminSocket';
-import { api, mediaUrl } from '../services/api';
+import { api, getApiUrl, mediaUrl } from '../services/api';
 import { Brand } from '../components/ui/Logo';
 import { Avatar, Skeleton } from '../components/ui/Misc';
 import { Badge } from '../components/ui/Badge';
 import { DropdownMenu, MenuItem, MenuLabel, MenuSeparator } from '../components/ui/Menu';
 import { ThemeSwitch, ThemeToggleButton } from '../components/ui/ThemeSwitch';
 import { cn } from '../utils/cn';
-import { Store, Users } from 'lucide-react';
+import { Download, Store, Users } from 'lucide-react';
 
 const NAV = [
   { to: '/dashboard', label: 'Tableau de bord', short: 'Accueil', icon: LayoutDashboard },
@@ -103,6 +103,18 @@ function ConnectionPill({ connected, compact }) {
   );
 }
 
+/** Downloads the user guide with the signed-in token (a plain link would not send it). */
+async function downloadGuide() {
+  const res = await fetch(`${getApiUrl()}/guide`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+  if (!res.ok) throw new Error('Guide indisponible pour le moment.');
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'Guide-ImageScreen.pdf';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function UserMenu({ user, isSuperAdmin, isStoreAdmin, onLogout }) {
   const display = user?.name || user?.email || 'Utilisateur';
   return (
@@ -130,6 +142,7 @@ function UserMenu({ user, isSuperAdmin, isStoreAdmin, onLogout }) {
       </div>
       <MenuSeparator />
       <MenuItem icon={SettingsIcon} to="/settings">Paramètres</MenuItem>
+      <MenuItem icon={Download} onClick={() => downloadGuide().catch((err) => window.alert(err.message))}>Guide d'utilisation</MenuItem>
       {isSuperAdmin && <MenuItem icon={ShieldCheck} to="/admin">Administration</MenuItem>}
       <MenuSeparator />
       <MenuLabel>Apparence</MenuLabel>
