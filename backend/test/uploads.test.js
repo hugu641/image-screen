@@ -87,3 +87,47 @@ test('uploads interrupted by a restart are cleaned up at startup', async (t) => 
   t.after(() => second.stop());
   assert.equal(fs.existsSync(path.join(leftover, 'interrupted.part')), false);
 });
+
+test('the store logo is not added to the media library', async (t) => {
+  const srv = await startServer();
+  t.after(() => srv.stop());
+  const sup = await api(srv.base, 'POST', '/auth/register', { email: 'boss@shop.fr', password: PASSWORD });
+  const store = await storeAdminToken(srv.base, sup.data.token);
+
+  const fd = new FormData();
+  fd.append('file', new Blob([PNG_1x1], { type: 'image/png' }), 'logo.png');
+  const res = await fetch(srv.base + '/api/settings/logo', { method: 'POST', headers: { Authorization: 'Bearer ' + store.token }, body: fd });
+  const body = await res.json();
+  assert.equal(res.status, 201, JSON.stringify(body));
+  assert.ok(body.logo.startsWith(`/uploads/${store.storeId}/logo-`));
+  assert.equal((await fetch(srv.base + body.logo)).status, 200, 'logo is served');
+
+  assert.equal((await api(srv.base, 'GET', '/media', null, store.token)).data.length, 0, 'not in the library');
+  assert.equal((await api(srv.base, 'PUT', '/settings', { logo: body.logo }, store.token)).status, 200, 'saved as the logo');
+  assert.equal((await api(srv.base, 'GET', '/settings', null, store.token)).data.logo, body.logo);
+
+  // A plain user cannot change the logo
+  const fd2 = new FormData();
+  fd2.append('file', new Blob([PNG_1x1], { type: 'image/png' }), 'logo.png');
+  const denied = await fetch(srv.base + '/api/settings/logo', { method: 'POST', headers: { Authorization: 'Bearer ' + sup.data.token }, body: fd2 });
+  assert.equal(denied.status, 403);
+});
+
+test('a logo imported as media before this fix is hidden from the library', async (t) => {
+  const first = await startServer();
+  const sup = await api(first.base, 'POST', '/auth/register', { email: 'boss@shop.fr', password: PASSWORD });
+  const store = await storeAdminToken(first.base, sup.data.token);
+  const up = await upload(first.base, store.token, PNG_1x1, 'logo-ancien.png');
+  const filepath = up.data.media[0].filepath;
+  assert.equal((await api(first.base, 'PUT', '/settings', { logo: filepath }, store.token)).status, 200);
+  assert.equal((await api(first.base, 'GET', '/media', null, store.token)).data.length, 1);
+  const dir = first.dir;
+  await first.stop();
+
+  const second = await startServer({}, dir);
+  t.after(() => second.stop());
+  const login = await api(second.base, 'POST', '/auth/login', { email: 'magasin@shop.fr', password: 'store-admin-passphrase' });
+  assert.equal(login.status, 200);
+  assert.equal((await api(second.base, 'GET', '/media', null, login.data.token)).data.length, 0, 'old logo hidden');
+  assert.equal((await api(second.base, 'GET', '/settings', null, login.data.token)).data.logo, filepath, 'still the logo');
+});

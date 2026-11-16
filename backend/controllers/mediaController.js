@@ -47,6 +47,45 @@ const upload = multer({
   limits: { fileSize: MAX_VIDEO_BYTES, files: MAX_FILES_PER_UPLOAD, fields: 5, fieldSize: 1024 },
 }).array('files', MAX_FILES_PER_UPLOAD);
 
+// ─── Logo du magasin ─────────────────────────────────────────────────────────
+// The store logo is not part of the media library: it is stored in the store's folder and
+// only referenced by the settings.
+const logoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * MB, files: 1, fields: 2, fieldSize: 200 },
+}).single('file');
+
+async function uploadLogo(req, res) {
+  logoUpload(req, res, async (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Logo trop lourd (5 Mo maximum).' });
+      return res.status(400).json({ error: 'Envoi invalide.' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'Aucun fichier sélectionné.' });
+
+    const detected = detectFileType(req.file.buffer);
+    if (!detected || detected.kind !== 'image') {
+      return res.status(400).json({ error: 'Le logo doit être une image JPG, PNG ou WEBP.' });
+    }
+    if (!imageSizeIsSafe(req.file.buffer, detected.mime)) {
+      return res.status(400).json({ error: 'Image illisible ou trop grande en dimensions.' });
+    }
+    try {
+      const compressed = await compressImageBuffer(req.file.buffer, detected.mime);
+      const data = compressed || req.file.buffer;
+      const ext = compressed ? '.jpg' : detected.ext;
+      const dir = path.join(UPLOADS_DIR, req.user.storeId);
+      await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+      const filename = `logo-${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
+      await fs.promises.writeFile(path.join(dir, filename), data, { mode: 0o644 });
+      res.status(201).json({ logo: `/uploads/${req.user.storeId}/${filename}` });
+    } catch (error) {
+      console.error('Logo upload error:', error);
+      res.status(500).json({ error: "Une erreur est survenue lors de l'enregistrement du logo." });
+    }
+  });
+}
+
 async function removeTempFiles(files = []) {
   await Promise.all(files.map((f) => fs.promises.unlink(f.path).catch(() => {})));
 }
@@ -205,7 +244,10 @@ async function listMedia(req, res) {
     else if (sort === 'name_asc') { orderField = 'original_name'; orderDir = 'asc'; }
     else if (sort === 'name_desc') { orderField = 'original_name'; orderDir = 'desc'; }
 
-    let mediaList = await fdb.getAll('media', [{ field: 'store_id', value: req.user.storeId }], { orderBy: orderField, orderDir });
+    let mediaList = await fdb.getAll('media', [
+      { field: 'store_id', value: req.user.storeId },
+      { field: 'hidden', value: 0 },
+    ], { orderBy: orderField, orderDir });
 
     if (search) {
       const searchLower = search.toLowerCase();
@@ -291,4 +333,5 @@ module.exports = {
   deleteMedia,
   renameMedia,
   cleanIncoming,
+  uploadLogo,
 };

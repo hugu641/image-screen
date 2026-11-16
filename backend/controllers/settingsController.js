@@ -66,7 +66,7 @@ async function updateSettings(req, res) {
     }
     if (logo !== undefined) {
       // Only an uploaded file path or an http(s) URL — never javascript:/data: URLs
-      const okLogo = logo === '' || (typeof logo === 'string' && logo.length <= 500 && /^(\/uploads\/[\w.-]+|https?:\/\/[^\s]+)$/.test(logo));
+      const okLogo = logo === '' || (typeof logo === 'string' && logo.length <= 500 && /^(\/uploads\/(?:[\w-]+\/)?[\w.-]+|https?:\/\/[^\s]+)$/.test(logo));
       if (!okLogo) return res.status(400).json({ error: 'Logo invalide.' });
       updates.logo = logo;
     }
