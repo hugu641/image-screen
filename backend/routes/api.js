@@ -104,6 +104,7 @@ router.post('/screens/:id/sync', authController.authMiddleware, requireStore, sc
 // Read: public (TV players pass ?screenId=, logged-in users get their store's settings)
 router.get('/settings', settingsController.getSettings);
 router.put('/settings', authController.authMiddleware, requireStoreAdmin, settingsController.updateSettings);
+router.post('/settings/logo', uploadLimiter, authController.authMiddleware, requireStoreAdmin, mediaController.uploadLogo);
 
 // User guide (PDF) for signed-in users
 router.get('/guide', authController.authMiddleware, passwordController.downloadGuide);

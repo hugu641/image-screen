@@ -431,6 +431,9 @@ async function initDb() {
 
     // Multi-store: every piece of content belongs to exactly one store (see migrateToStores)
     await addColumnIfNotExists('settings', 'created_at', 'TEXT'); // settings are now created per store
+    // Logos imported as media before the logo endpoint existed are kept on disk but hidden
+    await addColumnIfNotExists('media', 'hidden', 'INTEGER DEFAULT 0');
+    await query.run("UPDATE media SET hidden = 1 WHERE filepath IN (SELECT logo FROM settings WHERE logo IS NOT NULL AND logo <> '')");
     await addColumnIfNotExists('users', 'store_id', 'TEXT');
     // Password reset / invitation: only a SHA-256 hash of the one-time token is stored
     await addColumnIfNotExists('users', 'reset_token_hash', 'TEXT');

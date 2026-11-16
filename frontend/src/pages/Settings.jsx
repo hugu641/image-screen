@@ -111,10 +111,10 @@ export default function Settings() {
     setLogoBusy(true);
     try {
       const fd = new FormData();
-      fd.append('files', file);
-      const res = await api.upload('/media/upload', fd);
-      if (res.media?.[0]) {
-        setLogo(res.media[0].filepath);
+      fd.append('file', file);
+      const res = await api.upload('/settings/logo', fd);
+      if (res.logo) {
+        setLogo(res.logo);
         toast.info('Logo importé : cliquez sur « Enregistrer » pour l’appliquer.');
       }
     } catch (err) {
