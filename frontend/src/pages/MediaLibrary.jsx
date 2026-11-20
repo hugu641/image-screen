@@ -30,8 +30,11 @@ import { EmptyState, PageHeader, ProgressBar, Segmented, Skeleton } from '../com
 import { useToast } from '../components/ui/Toast';
 import { useConfirm } from '../components/ui/Confirm';
 import MediaThumb from '../components/MediaThumb';
+import VideoEditor from '../components/VideoEditor';
+import { isTrimmed } from '../utils/trim';
+import { Scissors } from 'lucide-react';
 import { cn } from '../utils/cn';
-import { formatBytes, formatDate, plural } from '../utils/format';
+import { formatBytes, formatDate, formatDuration, plural } from '../utils/format';
 
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;   // images are compressed in memory on the server
 const MAX_VIDEO_BYTES = 5 * 1024 * 1024 * 1024; // videos are streamed to disk on the server
@@ -96,7 +99,7 @@ function Lightbox({ items, index, onIndex, onClose, onRename, onDelete }) {
 }
 
 /* ── Card (grid) ──────────────────────────────────────────────────────── */
-function MediaCard({ item, selected, selecting, onSelect, onOpen, onRename, onDelete }) {
+function MediaCard({ item, selected, selecting, onSelect, onOpen, onRename, onEdit, onDelete }) {
   return (
     <Card className={cn('group overflow-hidden transition-all hover:shadow-pop', selected && 'ring-2 ring-primary')}>
       <div className="relative aspect-[4/3] overflow-hidden bg-surface-3">
@@ -129,6 +132,7 @@ function MediaCard({ item, selected, selecting, onSelect, onOpen, onRename, onDe
           >
             <MenuItem icon={Eye} onClick={() => onOpen(item)}>Afficher</MenuItem>
             <MenuItem icon={Pencil} onClick={() => onRename(item)}>Renommer</MenuItem>
+            {isVideo(item) && <MenuItem icon={Scissors} onClick={() => onEdit(item)}>Monter la vidéo</MenuItem>}
             <MenuSeparator />
             <MenuItem icon={Trash2} tone="danger" onClick={() => onDelete(item)}>Supprimer</MenuItem>
           </DropdownMenu>
@@ -138,6 +142,11 @@ function MediaCard({ item, selected, selecting, onSelect, onOpen, onRename, onDe
           {isVideo(item) ? <Film className="size-3" /> : <ImageIcon className="size-3" />}
           {isVideo(item) ? 'Vidéo' : 'Image'}
         </span>
+        {isTrimmed(item) && (
+          <span className="absolute bottom-2.5 right-2.5 inline-flex items-center gap-1 rounded-md bg-brand/90 px-2 py-1 text-[10px] font-bold text-white">
+            <Scissors className="size-3" /> Extrait {formatDuration(item.trim_end - item.trim_start)}
+          </span>
+        )}
       </div>
       <div className="px-3.5 py-3">
         <p className="truncate text-[13px] font-semibold" title={item.original_name}>{item.original_name}</p>
@@ -148,7 +157,7 @@ function MediaCard({ item, selected, selecting, onSelect, onOpen, onRename, onDe
 }
 
 /* ── Row (list) ───────────────────────────────────────────────────────── */
-function MediaRow({ item, selected, onSelect, onOpen, onRename, onDelete }) {
+function MediaRow({ item, selected, onSelect, onOpen, onRename, onEdit, onDelete }) {
   return (
     <li className={cn('flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-surface-2/70 sm:gap-4 sm:px-4', selected && 'bg-primary/5')}>
       <button type="button" onClick={() => onSelect(item)} aria-pressed={selected} aria-label={selected ? 'Désélectionner' : 'Sélectionner'} className="text-subtle hover:text-fg">
@@ -162,9 +171,13 @@ function MediaRow({ item, selected, onSelect, onOpen, onRename, onDelete }) {
         </span>
       </button>
       <Badge tone={isVideo(item) ? 'accent' : 'info'} icon={isVideo(item) ? Film : ImageIcon} className="hidden sm:inline-flex">{isVideo(item) ? 'Vidéo' : 'Image'}</Badge>
+      {isTrimmed(item) && <Badge tone="primary" icon={Scissors} className="hidden md:inline-flex">Extrait {formatDuration(item.trim_end - item.trim_start)}</Badge>}
       <span className="hidden w-20 text-right text-xs tabular-nums text-muted sm:block">{formatBytes(item.size)}</span>
       <span className="hidden w-28 text-right text-xs text-subtle md:block">{formatDate(item.created_at, { day: 'numeric', month: 'short', year: 'numeric' })}</span>
       <div className="flex shrink-0 gap-0.5">
+        {isVideo(item) && (
+          <button type="button" onClick={() => onEdit(item)} aria-label="Monter la vidéo" className="grid size-8 place-items-center rounded-lg text-muted hover:bg-surface-3 hover:text-fg"><Scissors className="size-4" /></button>
+        )}
         <button type="button" onClick={() => onRename(item)} aria-label="Renommer" className="grid size-8 place-items-center rounded-lg text-muted hover:bg-surface-3 hover:text-fg"><Pencil className="size-4" /></button>
         <button type="button" onClick={() => onDelete(item)} aria-label="Supprimer" className="grid size-8 place-items-center rounded-lg text-muted hover:bg-danger/10 hover:text-danger"><Trash2 className="size-4" /></button>
       </div>
@@ -190,6 +203,7 @@ export default function MediaLibrary() {
   const [selected, setSelected] = useState(() => new Set());
   const [lightbox, setLightbox] = useState(null); // index in `visible`
   const [renaming, setRenaming] = useState(null);
+  const [editing, setEditing] = useState(null);
 
   const [upload, setUpload] = useState(null); // { progress, label }
   const [dragging, setDragging] = useState(false);
@@ -424,6 +438,7 @@ export default function MediaLibrary() {
               onSelect={toggle}
               onOpen={() => setLightbox(i)}
               onRename={setRenaming}
+              onEdit={setEditing}
               onDelete={(it) => deleteItems([it])}
             />
           ))}
@@ -432,7 +447,7 @@ export default function MediaLibrary() {
         <Card>
           <ul className="divide-y divide-line">
             {visible.map((m, i) => (
-              <MediaRow key={m.id} item={m} selected={selected.has(m.id)} onSelect={toggle} onOpen={() => setLightbox(i)} onRename={setRenaming} onDelete={(it) => deleteItems([it])} />
+              <MediaRow key={m.id} item={m} selected={selected.has(m.id)} onSelect={toggle} onOpen={() => setLightbox(i)} onRename={setRenaming} onEdit={setEditing} onDelete={(it) => deleteItems([it])} />
             ))}
           </ul>
         </Card>
@@ -472,6 +487,7 @@ export default function MediaLibrary() {
         />
       )}
 
+      {editing && <VideoEditor item={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); fetchMedia(); }} />}
       {renaming && <RenameModal item={renaming} onClose={() => setRenaming(null)} onDone={() => { setRenaming(null); fetchMedia(); }} />}
     </div>
   );

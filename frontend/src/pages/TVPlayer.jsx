@@ -96,6 +96,44 @@ function Splash({ storeName, logoUrl, message, online }) {
 // Videos above this size are streamed from the server instead of being loaded into the TV's
 // memory (a multi-GB file would crash the device). Images and small videos are kept offline.
 const CACHE_MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+/**
+ * A video that starts at `start` and stops at `end` (the excerpt chosen in the library).
+ * A single-video playlist loops on the excerpt; otherwise the next slide follows.
+ */
+function VideoSlide({ src, start = 0, end = null, loopSingle = false, onDone }) {
+  const ref = useRef(null);
+  const finished = useRef(false);
+
+  useEffect(() => { finished.current = false; }, [src]);
+
+  const finish = () => {
+    if (finished.current) return;
+    const v = ref.current;
+    if (loopSingle && v) {
+      v.currentTime = start;
+      v.play().catch(() => {});
+      return;
+    }
+    finished.current = true;
+    onDone();
+  };
+
+  return (
+    <video
+      ref={ref}
+      src={src}
+      autoPlay
+      muted // muted so autoplay works reliably on every TV browser
+      playsInline
+      onLoadedMetadata={() => { if (ref.current && start > 0) ref.current.currentTime = start; }}
+      onTimeUpdate={() => { if (end != null && ref.current && ref.current.currentTime >= end - 0.05) finish(); }}
+      onEnded={finish}
+      onError={onDone}
+      className="h-full w-full object-cover"
+    />
+  );
+}
+
 const isCacheable = (item) => !String(item.mime_type || '').startsWith('video/') || Number(item.size || 0) <= CACHE_MAX_VIDEO_BYTES;
 
 function PairingView({ code, screenId, storeName, logoUrl, online }) {
@@ -434,8 +472,10 @@ export default function TVPlayer() {
     }
 
     const isVideo = slide.mime_type.startsWith('video/');
-    // Videos advance on `ended`; the timeout is a safety net for stuck/broken files
-    const ms = isVideo ? 45000 : (slide.custom_duration || activePlaylist?.duration || 5) * 1000;
+    // Videos advance on their end (or the excerpt's end); the timeout is a safety net for stuck
+    // files, sized to the excerpt when its length is known
+    const videoLength = slide.duration ? (slide.trim_end ?? slide.duration) - (slide.trim_start || 0) : 45;
+    const ms = isVideo ? (videoLength + 10) * 1000 : (slide.custom_duration || activePlaylist?.duration || 5) * 1000;
     slideTimeoutRef.current = setTimeout(advanceSlide, ms);
     return () => clearTimeout(slideTimeoutRef.current);
   }, [slides, currentSlideIndex, activePlaylist, advanceSlide, screenId]);
@@ -475,15 +515,12 @@ export default function TVPlayer() {
     <div className="fixed inset-0 z-50 h-screen w-screen cursor-none select-none overflow-hidden bg-black">
       <div key={currentSlideIndex} className={cn('h-full w-full', transitionClass)}>
         {slide.mime_type.startsWith('video/') ? (
-          <video
+          <VideoSlide
             src={slide.localUrl}
-            autoPlay
-            muted // muted so autoplay works reliably on every TV browser
-            playsInline
-            loop={slides.length === 1}
-            onEnded={advanceSlide}
-            onError={advanceSlide}
-            className="h-full w-full object-cover"
+            start={slide.trim_start || 0}
+            end={slide.trim_end ?? null}
+            loopSingle={slides.length === 1}
+            onDone={advanceSlide}
           />
         ) : (
           <img src={slide.localUrl} alt="" onError={advanceSlide} className="h-full w-full object-cover" />

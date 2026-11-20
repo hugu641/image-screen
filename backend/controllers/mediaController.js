@@ -298,6 +298,45 @@ async function deleteMedia(req, res) {
   }
 }
 
+/**
+ * PUT /media/:id/trim  { start, end, duration }
+ * Stores the excerpt of a video to play (seconds). The file itself is never modified, so the
+ * edit is reversible: resetting to 0 → duration gives back the full video.
+ */
+async function trimMedia(req, res) {
+  const { id } = req.params;
+  const duration = Number(req.body?.duration);
+  const start = Number(req.body?.start);
+  const end = Number(req.body?.end);
+  if (![duration, start, end].every(Number.isFinite) || duration <= 0 || duration > 86400) {
+    return res.status(400).json({ error: 'Durée de la vidéo invalide.' });
+  }
+  if (start < 0 || end > duration + 0.05 || end - start < 0.5) {
+    return res.status(400).json({ error: "Extrait invalide : il doit durer au moins 0,5 seconde et rester dans la vidéo." });
+  }
+
+  try {
+    const media = await fdb.getById('media', id);
+    if (!media || media.store_id !== req.user.storeId) {
+      return res.status(404).json({ error: 'Média introuvable.' });
+    }
+    if (!String(media.mime_type || '').startsWith('video/')) {
+      return res.status(400).json({ error: 'Seules les vidéos peuvent être montées.' });
+    }
+
+    const round = (v) => Math.round(v * 100) / 100;
+    const trimStart = round(start);
+    const trimEnd = Math.min(round(end), round(duration));
+    await fdb.update('media', id, { duration: round(duration), trim_start: trimStart, trim_end: trimEnd });
+    await logEvent(null, 'info', `Vidéo montée : ${media.original_name}`, req.user.storeId);
+
+    res.json(await fdb.getById('media', id));
+  } catch (error) {
+    console.error('Trim media error:', error);
+    res.status(500).json({ error: 'Erreur lors de l’enregistrement du montage.' });
+  }
+}
+
 async function renameMedia(req, res) {
   const { id } = req.params;
   const name = typeof req.body?.name === 'string' ? sanitizeDisplayName(req.body.name) : '';
@@ -332,6 +371,7 @@ module.exports = {
   listMedia,
   deleteMedia,
   renameMedia,
+  trimMedia,
   cleanIncoming,
   uploadLogo,
 };

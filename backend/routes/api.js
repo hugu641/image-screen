@@ -82,6 +82,7 @@ router.post('/media/upload', uploadLimiter, authController.authMiddleware, requi
 router.get('/media/usage', authController.authMiddleware, requireStore, mediaController.mediaUsage);
 router.get('/media', authController.authMiddleware, requireStore, mediaController.listMedia);
 router.put('/media/:id/rename', authController.authMiddleware, requireStore, mediaController.renameMedia);
+router.put('/media/:id/trim', authController.authMiddleware, requireStore, mediaController.trimMedia);
 router.delete('/media/:id', authController.authMiddleware, requireStore, mediaController.deleteMedia);
 
 // Playlists Routes
